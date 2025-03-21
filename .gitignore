@@ -12,3 +12,4 @@ __debug*
 .DS_Store
 mud.sh
 _datafiles/willowdale_config.yaml
+/logs/*
