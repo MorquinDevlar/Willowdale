@@ -110,6 +110,24 @@ func TryCommand(cmd string, rest string, mobId int) (bool, error) {
 		}
 	*/
 
+	if alias := keywords.TryCommandAlias(cmd); alias != cmd {
+		// If it's a multi-word aliase, we need to extract the first word to replace the command
+		// The rest will be combined with any "rest" the mob provided.
+		if strings.Contains(alias, ` `) {
+			parts := strings.Split(alias, ` `)
+			// grab the first word as the new cmd
+			cmd = parts[0]
+			// Add the "rest" to the end if any
+			if len(rest) > 0 {
+				rest = strings.TrimPrefix(alias, cmd+` `) + ` ` + rest
+			} else {
+				rest = strings.TrimPrefix(alias, cmd+` `)
+			}
+		} else {
+			cmd = alias
+		}
+	}
+
 	if cmdInfo, ok := mobCommands[cmd]; ok {
 		if mobDisabled && !cmdInfo.AllowedWhenDowned {
 

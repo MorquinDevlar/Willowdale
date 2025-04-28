@@ -153,6 +153,13 @@ type NewTurn struct {
 
 func (n NewTurn) Type() string { return `NewTurn` }
 
+// Anytime a mob is idle
+type MobIdle struct {
+	MobInstanceId int
+}
+
+func (i MobIdle) Type() string { return `MobIdle` }
+
 // Gained or lost an item
 type EquipmentChange struct {
 	UserId        int

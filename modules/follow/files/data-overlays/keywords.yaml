@@ -1,0 +1,7 @@
+help:
+  command:
+    parties:
+      - follow
+command-aliases:
+  'follow stop': ['unfollow']
+  'follow lose': ['lose']

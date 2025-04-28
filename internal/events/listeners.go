@@ -91,16 +91,16 @@ func RegisterListener(emptyEvent any, cbFunc Listener, qFlag ...QueueFlag) Liste
 	} else if listenerDetails.isFinal {
 		eventListeners[eType] = append(eventListeners[eType], listenerDetails)
 
-	} else {
+	} else { // end of the list, but before any "final" listeners
 
 		insertPosition := 0
-		for idx := 0; idx < len(eventListeners[eType]); idx++ {
+
+		for idx := len(eventListeners[eType]) - 1; idx >= 0; idx-- {
 			// If we're looking at a "final" listener, we can't go any farther down the list
 			if !eventListeners[eType][idx].isFinal {
-				insertPosition = idx
-				continue
+				insertPosition = idx + 1
+				break
 			}
-			break
 		}
 
 		eventListeners[eType] = append(eventListeners[eType], ListenerWrapper{})

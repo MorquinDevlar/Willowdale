@@ -77,7 +77,6 @@ var (
 		`experience`:  {Experience, true, false},
 		`equip`:       {Equip, false, false},
 		`flee`:        {Flee, false, false},
-		`follow`:      {Follow, false, false},
 		`gearup`:      {Gearup, false, false},
 		`get`:         {Get, false, false},
 		`give`:        {Give, false, false},
@@ -283,20 +282,36 @@ func TryCommand(cmd string, rest string, userId int, flags events.EventFlag) (bo
 	} else {
 
 		if alias := user.TryCommandAlias(cmd); alias != cmd {
+			// If it's a multi-word aliase, we need to extract the first word to replace the command
+			// The rest will be combined with any "rest" the player provided.
 			if strings.Contains(alias, ` `) {
 				parts := strings.Split(alias, ` `)
-				cmd = parts[0]                                         // grab the first word as the new cmd
-				rest = strings.TrimPrefix(alias, cmd+` `) + ` ` + rest // add the remaining alias to the rest
+				// grab the first word as the new cmd
+				cmd = parts[0]
+				// Add the "rest" to the end if any
+				if len(rest) > 0 {
+					rest = strings.TrimPrefix(alias, cmd+` `) + ` ` + rest
+				} else {
+					rest = strings.TrimPrefix(alias, cmd+` `)
+				}
 			} else {
 				cmd = alias
 			}
 		}
 
 		if alias := keywords.TryCommandAlias(cmd); alias != cmd {
+			// If it's a multi-word aliase, we need to extract the first word to replace the command
+			// The rest will be combined with any "rest" the player provided.
 			if strings.Contains(alias, ` `) {
 				parts := strings.Split(alias, ` `)
-				cmd = parts[0]                                         // grab the first word as the new cmd
-				rest = strings.TrimPrefix(alias, cmd+` `) + ` ` + rest // add the remaining alias to the rest
+				// grab the first word as the new cmd
+				cmd = parts[0]
+				// Add the "rest" to the end if any
+				if len(rest) > 0 {
+					rest = strings.TrimPrefix(alias, cmd+` `) + ` ` + rest
+				} else {
+					rest = strings.TrimPrefix(alias, cmd+` `)
+				}
 			} else {
 				cmd = alias
 			}

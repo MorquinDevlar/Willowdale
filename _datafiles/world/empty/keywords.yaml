@@ -87,7 +87,6 @@ help:
       - online
       - quit
     parties:
-      - follow
       - party
       - share
     locks:

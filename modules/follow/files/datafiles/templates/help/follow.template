@@ -7,3 +7,9 @@ The <ansi fg="command">follow</ansi> follows another player so that when they le
   <ansi fg="command">follow Jim</ansi>
   This would follow <ansi fg="username">Jim</ansi> from now on.
 
+  <ansi fg="command">follow stop</ansi>
+  Stop following anyone
+
+  <ansi fg="command">follow lose</ansi>
+  Shake off anyone following you, so that they aren't anymore.
+

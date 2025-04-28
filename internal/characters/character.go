@@ -85,7 +85,6 @@ type Character struct {
 	roomHistory      []int             // A stack FILO of the last X rooms the character has been in
 	PlayerDamage     map[int]int       `yaml:"-"` // key = who, value = how much
 	LastPlayerDamage uint64            `yaml:"-"` // last round a player damaged this character
-	followers        []int             // everyone following this user
 	permaBuffIds     []int             // Buff Id's that are always present for this character
 	userId           int               // User ID of the character if any
 }
@@ -532,10 +531,6 @@ func (c *Character) GetRandomItem() (items.Item, bool) {
 	return c.Items[util.Rand(len(c.Items))], true
 }
 
-func (c *Character) AddFollower(uId int) {
-	c.followers = append(c.followers, uId)
-}
-
 // USERNAME appears to be <BLANK>
 func (c *Character) GetHealthAppearance() string {
 
@@ -559,10 +554,6 @@ func (c *Character) GetHealthAppearance() string {
 	}
 
 	return fmt.Sprintf(`<ansi fg="username">%s</ansi> is in <ansi fg="%s">perfect health.</ansi>`, c.Name, className)
-}
-
-func (c *Character) GetFollowers() []int {
-	return append([]int{}, c.followers...)
 }
 
 func (c *Character) GetAllSkillRanks() map[string]int {

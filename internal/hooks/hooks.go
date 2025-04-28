@@ -31,6 +31,7 @@ func RegisterListeners() {
 	//
 	events.RegisterListener(events.NewRound{}, AutoHeal)
 	events.RegisterListener(events.NewRound{}, IdleMobs)
+	events.RegisterListener(events.MobIdle{}, HandleIdleMobs)
 
 	// Turn Hooks
 	events.RegisterListener(events.NewTurn{}, CleanupZombies)
