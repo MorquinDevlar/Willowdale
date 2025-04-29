@@ -73,7 +73,7 @@ type FollowModule struct {
 	// Keep a reference to the plugin when we create it so that we can call ReadBytes() and WriteBytes() on it.
 	plug *plugins.Plugin
 
-	followed  map[followId][]followId // key => who's followed. value ([]int{}) => who's following them
+	followed  map[followId][]followId // key => who's followed. value ([]followId{}) => who's following them
 	followers map[followId]followId   // key => who's following someone. value => who's being followed
 }
 
@@ -144,6 +144,10 @@ func (f *FollowModule) loseFollowers(followTarget followId) []followId {
 	}
 	return allFollowers
 }
+
+//
+// Event Handlers
+//
 
 // Interrupt the idle action of mobs if they are currently following someone.
 func (f *FollowModule) idleMobHandler(e events.Event) events.ListenerReturn {
@@ -244,6 +248,10 @@ func (f *FollowModule) playerDespawnHandler(e events.Event) events.ListenerRetur
 
 	return events.Continue
 }
+
+//
+// Commands
+//
 
 func (f *FollowModule) followUserCommand(rest string, user *users.UserRecord, room *rooms.Room, flags events.EventFlag) (bool, error) {
 
