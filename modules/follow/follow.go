@@ -7,6 +7,7 @@ import (
 
 	"github.com/GoMudEngine/GoMud/internal/events"
 	"github.com/GoMudEngine/GoMud/internal/mobs"
+	"github.com/GoMudEngine/GoMud/internal/parties"
 	"github.com/GoMudEngine/GoMud/internal/plugins"
 	"github.com/GoMudEngine/GoMud/internal/rooms"
 	"github.com/GoMudEngine/GoMud/internal/users"
@@ -57,6 +58,7 @@ func init() {
 	events.RegisterListener(events.RoomChange{}, f.roomChangeHandler)
 	events.RegisterListener(events.PlayerDespawn{}, f.playerDespawnHandler)
 	events.RegisterListener(events.MobIdle{}, f.idleMobHandler, events.First)
+	events.RegisterListener(events.PartyUpdated{}, f.onPartyChange)
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -148,6 +150,20 @@ func (f *FollowModule) loseFollowers(followTarget followId) []followId {
 //
 // Event Handlers
 //
+
+// If players make changes (into/out of party)
+// Just make sure they aren't following anyone.
+// This is just basic cleanup/precaution
+func (f *FollowModule) onPartyChange(e events.Event) events.ListenerReturn {
+
+	evt := e.(events.PartyUpdated)
+
+	for _, uId := range evt.UserIds {
+		f.stopFollowing(followId{userId: uId})
+	}
+
+	return events.Continue
+}
 
 // Interrupt the idle action of mobs if they are currently following someone.
 func (f *FollowModule) idleMobHandler(e events.Event) events.ListenerReturn {
@@ -257,6 +273,11 @@ func (f *FollowModule) followUserCommand(rest string, user *users.UserRecord, ro
 
 	if rest == "" {
 		user.SendText(`Follow whom? Try <ansi fg="command">help command</ansi>`)
+		return true, nil
+	}
+
+	if parties.Get(user.UserId) != nil {
+		user.SendText(`You can't use this command while in a party.`)
 		return true, nil
 	}
 

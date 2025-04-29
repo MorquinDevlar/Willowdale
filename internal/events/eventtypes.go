@@ -346,6 +346,8 @@ type Party struct {
 	Position      map[int]string
 }
 
+func (p Party) Type() string { return `Party` }
+
 type RedrawPrompt struct {
 	UserId        int
 	OnlyIfChanged bool
