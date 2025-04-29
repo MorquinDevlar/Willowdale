@@ -9,6 +9,10 @@ var PathTargets = [
 
 function onIdle(mob, room) {
     
+    if ( mob.PathingAtWaypoint() && mob.IsHome() ) {
+        mob.SetAdjective("patrolling", false);
+    }
+
     var random = Math.floor(Math.random() * 10);
     switch (random) {
         case 0:
@@ -19,8 +23,10 @@ function onIdle(mob, room) {
         case 2:
             // Start a patrol path
             var randomPath = Math.floor(Math.random() * PathTargets.length);
-            var selectedPath = PathTargets[randomPath]
+            var selectedPath = PathTargets[randomPath];
+            mob.SetAdjective("patrolling", true);
             mob.Command("pathto "+selectedPath.join(' '));
+
             return true;
         case 3:
             // wander randomly.

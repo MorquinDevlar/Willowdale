@@ -597,6 +597,13 @@ func (a ScriptActor) SetAdjective(adj string, addIt bool) {
 	a.characterRecord.SetAdjective(adj, addIt)
 }
 
+func (a ScriptActor) IsHome() bool {
+	if a.mobRecord != nil {
+		return a.mobRecord.HomeRoomId == a.characterRecord.RoomId
+	}
+	return false
+}
+
 func (a ScriptActor) GetCharmCount() int {
 	return len(a.characterRecord.GetCharmIds())
 }
