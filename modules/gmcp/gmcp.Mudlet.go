@@ -40,7 +40,6 @@ type MudletConfig struct {
 	DiscordLargeImageKey string `json:"discord_large_image_key" yaml:"discord_large_image_key"`
 	DiscordDetails       string `json:"discord_details" yaml:"discord_details"`
 	DiscordState         string `json:"discord_state" yaml:"discord_state"`
-	DiscordGame          string `json:"discord_game" yaml:"discord_game"`
 	DiscordSmallImageKey string `json:"discord_small_image_key" yaml:"discord_small_image_key"`
 }
 
@@ -75,72 +74,44 @@ type GMCPDiscordMessage struct {
 
 func (g GMCPDiscordMessage) Type() string { return `GMCPDiscordMessage` }
 
+// Default configuration values
+var defaultConfig = MudletConfig{
+	// Mapper configuration
+	MapperVersion: "1",
+	MapperURL:     "https://github.com/GoMudEngine/MudletMapper/releases/latest/download/GoMudMapper.mpackage",
+
+	// UI configuration
+	UIVersion: "1",
+	UIURL:     "https://github.com/GoMudEngine/MudletUI/releases/latest/download/GoMudUI.mpackage",
+
+	// Map data configuration
+	MapVersion: "1",
+	MapURL:     "https://github.com/GoMudEngine/MudletMapper/releases/latest/download/gomud.dat",
+
+	// Discord Rich Presence configuration
+	DiscordApplicationID: "1298377884154724412",           // Default GoMud Discord Server
+	DiscordInviteURL:     "https://discord.gg/FaauSYej3n", // Default GoMud Discord Server
+	DiscordDetails:       "Using GoMudEngine",
+	DiscordState:         "Exploring the world",
+	DiscordLargeImageKey: "server-icon",
+	DiscordSmallImageKey: "character-icon",
+}
+
 func init() {
-	// Set up a default configuration first
+	// Create module with basic structure
 	g := GMCPMudletModule{
-		plug: plugins.New(`gmcp.Mudlet`, `1.0`),
-		config: MudletConfig{
-			MapperVersion: "1",                                                                                         // Default value
-			MapperURL:     "https://github.com/GoMudEngine/MudletMapper/releases/latest/download/GoMudMapper.mpackage", // Default value
-			UIVersion:     "1",                                                                                         // Default value
-			UIURL:         "https://github.com/GoMudEngine/MudletUI/releases/latest/download/GoMudUI.mpackage",         // Default value
-			MapVersion:    "1",                                                                                         // Default value
-			MapURL:        "https://github.com/GoMudEngine/MudletMapper/releases/latest/download/gomud.dat",            // Default value
-			// Discord defaults
-			DiscordApplicationID: "1298377884154724412",           // Default value
-			DiscordInviteURL:     "https://discord.gg/FaauSYej3n", // Default value
-			DiscordLargeImageKey: "server-icon",                   // Default value
-			DiscordDetails:       "Playing on GoMud",              // Default value
-			DiscordState:         "Exploring the world",           // Default value
-			DiscordGame:          "GoMud",                         // Default value
-			DiscordSmallImageKey: "character-icon",                // Default value
-		},
-		mudletUsers: make(map[int]bool), // Initialize the mudletUsers map
+		plug:        plugins.New(`gmcp.Mudlet`, `1.0`),
+		mudletUsers: make(map[int]bool),
 	}
 
-	// Attach embedded filesystem without logging errors
-	_ = g.plug.AttachFileSystem(files)
+	// Attach filesystem with proper error handling
+	if err := g.plug.AttachFileSystem(files); err != nil {
+		panic(err)
+	}
 
-	// Load config values from plugin config system
-	if mapperVersion, ok := g.plug.Config.Get(`MapperVersion`).(string); ok {
-		g.config.MapperVersion = mapperVersion
-	}
-	if mapperURL, ok := g.plug.Config.Get(`MapperURL`).(string); ok {
-		g.config.MapperURL = mapperURL
-	}
-	if uiVersion, ok := g.plug.Config.Get(`UIVersion`).(string); ok {
-		g.config.UIVersion = uiVersion
-	}
-	if uiURL, ok := g.plug.Config.Get(`UIURL`).(string); ok {
-		g.config.UIURL = uiURL
-	}
-	if mapVersion, ok := g.plug.Config.Get(`MapVersion`).(string); ok {
-		g.config.MapVersion = mapVersion
-	}
-	if mapURL, ok := g.plug.Config.Get(`MapURL`).(string); ok {
-		g.config.MapURL = mapURL
-	}
-	if discordAppID, ok := g.plug.Config.Get(`DiscordApplicationID`).(string); ok {
-		g.config.DiscordApplicationID = discordAppID
-	}
-	if discordInviteURL, ok := g.plug.Config.Get(`DiscordInviteURL`).(string); ok {
-		g.config.DiscordInviteURL = discordInviteURL
-	}
-	if discordLargeImageKey, ok := g.plug.Config.Get(`DiscordLargeImageKey`).(string); ok {
-		g.config.DiscordLargeImageKey = discordLargeImageKey
-	}
-	if discordDetails, ok := g.plug.Config.Get(`DiscordDetails`).(string); ok {
-		g.config.DiscordDetails = discordDetails
-	}
-	if discordState, ok := g.plug.Config.Get(`DiscordState`).(string); ok {
-		g.config.DiscordState = discordState
-	}
-	if discordGame, ok := g.plug.Config.Get(`DiscordGame`).(string); ok {
-		g.config.DiscordGame = discordGame
-	}
-	if discordSmallImageKey, ok := g.plug.Config.Get(`DiscordSmallImageKey`).(string); ok {
-		g.config.DiscordSmallImageKey = discordSmallImageKey
-	}
+	// Register callbacks for load/save
+	g.plug.Callbacks.SetOnLoad(g.load)
+	g.plug.Callbacks.SetOnSave(g.save)
 
 	// Register event listeners
 	events.RegisterListener(events.PlayerSpawn{}, g.playerSpawnHandler)
@@ -148,11 +119,145 @@ func init() {
 	events.RegisterListener(GMCPDiscordStatusRequest{}, g.discordStatusRequestHandler)
 	events.RegisterListener(GMCPDiscordMessage{}, g.discordMessageHandler)
 	events.RegisterListener(events.RoomChange{}, g.roomChangeHandler)
+	events.RegisterListener(events.PartyUpdated{}, g.partyUpdateHandler)
 
-	// Register the Mudlet-specific user commands - set as hidden (true for first bool)
+	// Register the Mudlet-specific user commands
 	g.plug.AddUserCommand("mudletmap", g.sendMapCommand, true, false)
 	g.plug.AddUserCommand("mudletui", g.sendUICommand, false, false)
 	g.plug.AddUserCommand("checkclient", g.checkClientCommand, true, false)
+}
+
+// load handles loading configuration from the plugin's storage
+func (g *GMCPMudletModule) load() {
+	// Start with default values
+	g.config = defaultConfig
+
+	// Load individual config values
+	if mapperVersion, ok := g.plug.Config.Get(`mapper_version`).(string); ok {
+		g.config.MapperVersion = mapperVersion
+	}
+	if mapperURL, ok := g.plug.Config.Get(`mapper_url`).(string); ok {
+		g.config.MapperURL = mapperURL
+	}
+	if uiVersion, ok := g.plug.Config.Get(`ui_version`).(string); ok {
+		g.config.UIVersion = uiVersion
+	}
+	if uiURL, ok := g.plug.Config.Get(`ui_url`).(string); ok {
+		g.config.UIURL = uiURL
+	}
+	if mapVersion, ok := g.plug.Config.Get(`map_version`).(string); ok {
+		g.config.MapVersion = mapVersion
+	}
+	if mapURL, ok := g.plug.Config.Get(`map_url`).(string); ok {
+		g.config.MapURL = mapURL
+	}
+	if discordAppID, ok := g.plug.Config.Get(`discord_application_id`).(string); ok {
+		g.config.DiscordApplicationID = discordAppID
+	}
+	if discordInviteURL, ok := g.plug.Config.Get(`discord_invite_url`).(string); ok {
+		g.config.DiscordInviteURL = discordInviteURL
+	}
+	if discordLargeImageKey, ok := g.plug.Config.Get(`discord_large_image_key`).(string); ok {
+		g.config.DiscordLargeImageKey = discordLargeImageKey
+	}
+	if discordDetails, ok := g.plug.Config.Get(`discord_details`).(string); ok {
+		g.config.DiscordDetails = discordDetails
+	}
+	if discordState, ok := g.plug.Config.Get(`discord_state`).(string); ok {
+		g.config.DiscordState = discordState
+	}
+	if discordSmallImageKey, ok := g.plug.Config.Get(`discord_small_image_key`).(string); ok {
+		g.config.DiscordSmallImageKey = discordSmallImageKey
+	}
+}
+
+// save handles saving configuration to the plugin's storage
+func (g *GMCPMudletModule) save() {
+	g.plug.WriteStruct(`mudlet_config`, g.config)
+}
+
+// getMapperConfig returns the mapper configuration with defaults
+func (g *GMCPMudletModule) getMapperConfig() (version, url string) {
+	// Start with default values from defaultConfig
+	version = defaultConfig.MapperVersion
+	url = defaultConfig.MapperURL
+
+	// Check for overrides in plugin config
+	if v, ok := g.plug.Config.Get(`mapper_version`).(string); ok {
+		version = v
+	}
+	if u, ok := g.plug.Config.Get(`mapper_url`).(string); ok {
+		url = u
+	}
+	return
+}
+
+// getUIConfig returns the UI configuration with defaults
+func (g *GMCPMudletModule) getUIConfig() (version, url string) {
+	// Start with default values from defaultConfig
+	version = defaultConfig.UIVersion
+	url = defaultConfig.UIURL
+
+	// Check for overrides in plugin config
+	if v, ok := g.plug.Config.Get(`ui_version`).(string); ok {
+		version = v
+	}
+	if u, ok := g.plug.Config.Get(`ui_url`).(string); ok {
+		url = u
+	}
+	return
+}
+
+// getMapConfig returns the map configuration with defaults
+func (g *GMCPMudletModule) getMapConfig() (version, url string) {
+	// Start with default values from defaultConfig
+	version = defaultConfig.MapVersion
+	url = defaultConfig.MapURL
+
+	// Check for overrides in plugin config
+	if v, ok := g.plug.Config.Get(`map_version`).(string); ok {
+		version = v
+	}
+	if u, ok := g.plug.Config.Get(`map_url`).(string); ok {
+		url = u
+	}
+	return
+}
+
+// getDiscordConfig returns the Discord configuration with defaults
+func (g *GMCPMudletModule) getDiscordConfig() (appID, inviteURL, largeImageKey, details, state, game, smallImageKey string) {
+	// Start with default values from defaultConfig
+	appID = defaultConfig.DiscordApplicationID
+	inviteURL = defaultConfig.DiscordInviteURL
+	largeImageKey = defaultConfig.DiscordLargeImageKey
+	details = defaultConfig.DiscordDetails
+	state = defaultConfig.DiscordState
+	smallImageKey = defaultConfig.DiscordSmallImageKey
+
+	// Get game name from server config - this is the source of truth
+	game = configs.GetServerConfig().MudName.String()
+
+	// Check for overrides in plugin config
+	if id, ok := g.plug.Config.Get(`discord_application_id`).(string); ok {
+		appID = id
+	}
+	if url, ok := g.plug.Config.Get(`discord_invite_url`).(string); ok {
+		inviteURL = url
+	}
+	if key, ok := g.plug.Config.Get(`discord_large_image_key`).(string); ok {
+		largeImageKey = key
+	}
+	if d, ok := g.plug.Config.Get(`discord_details`).(string); ok {
+		details = d
+	}
+	if s, ok := g.plug.Config.Get(`discord_state`).(string); ok {
+		state = s
+	}
+	if key, ok := g.plug.Config.Get(`discord_small_image_key`).(string); ok {
+		smallImageKey = key
+	}
+
+	return
 }
 
 // sendUICommand is a user command that sends UI-related GMCP messages to Mudlet clients
@@ -232,13 +337,16 @@ func (g *GMCPMudletModule) sendMudletUIInstall(userId int) {
 		return
 	}
 
+	// Get UI config values
+	uiVersion, uiURL := g.getUIConfig()
+
 	// Create a payload for UI installation
 	payload := struct {
 		Version string `json:"version"`
 		URL     string `json:"url"`
 	}{
-		Version: g.config.UIVersion,
-		URL:     g.config.UIURL,
+		Version: uiVersion,
+		URL:     uiURL,
 	}
 
 	// Send the Client.GUI message
@@ -320,9 +428,12 @@ func (g *GMCPMudletModule) sendMudletMapConfig(userId int) {
 		return
 	}
 
+	// Get map config values
+	_, mapURL := g.getMapConfig()
+
 	// Create a payload for the Client.Map message
 	mapConfig := map[string]string{
-		"url": g.config.MapURL,
+		"url": mapURL,
 	}
 
 	// Send the Client.Map message
@@ -375,13 +486,16 @@ func (g *GMCPMudletModule) sendMudletConfig(userId int) {
 		return
 	}
 
+	// Get mapper config values
+	mapperVersion, mapperURL := g.getMapperConfig()
+
 	// Create a GUI payload with mapper version and url
 	guiPayload := struct {
 		Version string `json:"version"`
 		URL     string `json:"url"`
 	}{
-		Version: g.config.MapperVersion,
-		URL:     g.config.MapperURL,
+		Version: mapperVersion,
+		URL:     mapperURL,
 	}
 
 	// Send the Client.GUI message with mapper version and URL
@@ -398,13 +512,16 @@ func (g *GMCPMudletModule) sendMudletConfig(userId int) {
 		return
 	}
 
+	// Get Discord config values - only what we need for Discord.Info
+	appID, inviteURL, largeImageKey, details, state, game, smallImageKey := g.getDiscordConfig()
+
 	// Create a payload for Discord.Info - only applicationid and inviteurl
 	discordInfoPayload := struct {
 		ApplicationID string `json:"applicationid"`
 		InviteURL     string `json:"inviteurl"`
 	}{
-		ApplicationID: g.config.DiscordApplicationID,
-		InviteURL:     g.config.DiscordInviteURL,
+		ApplicationID: appID,
+		InviteURL:     inviteURL,
 	}
 
 	// Send the External.Discord.Info message
@@ -414,10 +531,74 @@ func (g *GMCPMudletModule) sendMudletConfig(userId int) {
 		Payload: discordInfoPayload,
 	})
 
-	// Send the Discord Status information
-	g.sendDiscordStatus(userId)
+	// Send the Discord Status information with the config values we already have
+	g.sendDiscordStatusWithConfig(userId, largeImageKey, details, state, game, smallImageKey)
 
 	mudlog.Info("GMCP", "type", "Mudlet", "action", "Sent Mudlet package config and Discord info", "userId", userId)
+}
+
+// sendDiscordStatusWithConfig sends the current Discord status information to the client using provided config values
+func (g *GMCPMudletModule) sendDiscordStatusWithConfig(userId int, largeImageKey, details, state, game, smallImageKey string) {
+	if userId < 1 {
+		return
+	}
+
+	// Get the user record to access character details
+	user := users.GetByUserId(userId)
+	if user == nil {
+		mudlog.Error("GMCP", "type", "Mudlet", "action", "Failed to get user record for Discord status", "userId", userId)
+		return
+	}
+
+	// Get the current room
+	room := rooms.LoadRoom(user.Character.RoomId)
+	if room == nil {
+		mudlog.Error("GMCP", "type", "Mudlet", "action", "Failed to get room for Discord status", "userId", userId, "roomId", user.Character.RoomId)
+		return
+	}
+
+	// Create a payload for Discord.Status
+	discordStatusPayload := struct {
+		Details       string `json:"details"`
+		State         string `json:"state"`
+		Game          string `json:"game"`
+		LargeImageKey string `json:"large_image_key"`
+		SmallImageKey string `json:"small_image_key"`
+		StartTime     int64  `json:"starttime"`
+		PartySize     int    `json:"partysize,omitempty"`
+		PartyMax      int    `json:"partymax,omitempty"`
+	}{
+		Details:       details,
+		State:         fmt.Sprintf("Exploring %s", room.Zone),
+		Game:          game,
+		LargeImageKey: largeImageKey,
+		SmallImageKey: smallImageKey,
+		StartTime:     user.GetConnectTime().Unix(),
+	}
+
+	// Check if the user is in a party
+	if party := parties.Get(userId); party != nil {
+		// Set party size for any party (including solo parties)
+		discordStatusPayload.PartySize = len(party.GetMembers())
+		discordStatusPayload.PartyMax = 10
+		discordStatusPayload.State = fmt.Sprintf("Party in %s", room.Zone)
+	}
+
+	// Send the External.Discord.Status message
+	events.AddToQueue(GMCPOut{
+		UserId:  userId,
+		Module:  "External.Discord.Status",
+		Payload: discordStatusPayload,
+	})
+
+	mudlog.Debug("GMCP", "type", "Mudlet", "action", "Sent Discord status update", "userId", userId, "zone", room.Zone)
+}
+
+// sendDiscordStatus sends the current Discord status information to the client
+func (g *GMCPMudletModule) sendDiscordStatus(userId int) {
+	// Get Discord config values
+	_, _, largeImageKey, details, state, game, smallImageKey := g.getDiscordConfig()
+	g.sendDiscordStatusWithConfig(userId, largeImageKey, details, state, game, smallImageKey)
 }
 
 // checkClientCommand checks if the player is using Mudlet and shows information if they are
@@ -463,13 +644,16 @@ func (g *GMCPMudletModule) discordStatusRequestHandler(e events.Event) events.Li
 		return events.Cancel
 	}
 
+	// Get Discord config values once
+	appID, inviteURL, largeImageKey, details, state, game, smallImageKey := g.getDiscordConfig()
+
 	// Create a payload for Discord.Info - only applicationid and inviteurl
 	discordInfoPayload := struct {
 		ApplicationID string `json:"applicationid"`
 		InviteURL     string `json:"inviteurl"`
 	}{
-		ApplicationID: g.config.DiscordApplicationID,
-		InviteURL:     g.config.DiscordInviteURL,
+		ApplicationID: appID,
+		InviteURL:     inviteURL,
 	}
 
 	// Send the External.Discord.Info message
@@ -479,8 +663,8 @@ func (g *GMCPMudletModule) discordStatusRequestHandler(e events.Event) events.Li
 		Payload: discordInfoPayload,
 	})
 
-	// Also send Discord Status information
-	g.sendDiscordStatus(userId)
+	// Also send Discord Status information with the config values we already have
+	g.sendDiscordStatusWithConfig(userId, largeImageKey, details, state, game, smallImageKey)
 
 	mudlog.Info("GMCP", "type", "Mudlet", "action", "Sent Discord Info and Status in response to request", "userId", userId)
 	return events.Continue
@@ -590,63 +774,6 @@ func (g *GMCPMudletModule) roomChangeHandler(e events.Event) events.ListenerRetu
 	return events.Continue
 }
 
-// sendDiscordStatus sends the current Discord status information to the client
-func (g *GMCPMudletModule) sendDiscordStatus(userId int) {
-	if userId < 1 {
-		return
-	}
-
-	// Get the user record to access character details
-	user := users.GetByUserId(userId)
-	if user == nil {
-		mudlog.Error("GMCP", "type", "Mudlet", "action", "Failed to get user record for Discord status", "userId", userId)
-		return
-	}
-
-	// Get the current room
-	room := rooms.LoadRoom(user.Character.RoomId)
-	if room == nil {
-		mudlog.Error("GMCP", "type", "Mudlet", "action", "Failed to get room for Discord status", "userId", userId, "roomId", user.Character.RoomId)
-		return
-	}
-
-	// Create a payload for Discord.Status
-	discordStatusPayload := struct {
-		Details       string `json:"details"`
-		State         string `json:"state"`
-		Game          string `json:"game"`
-		LargeImageKey string `json:"large_image_key"`
-		SmallImageKey string `json:"small_image_key"`
-		PartySize     int    `json:"partysize"`
-		PartyMax      int    `json:"partymax"`
-	}{
-		Details:       g.config.DiscordDetails,
-		State:         fmt.Sprintf("Exploring %s", room.Zone),
-		Game:          g.config.DiscordGame,
-		LargeImageKey: g.config.DiscordLargeImageKey,
-		SmallImageKey: g.config.DiscordSmallImageKey,
-		PartySize:     0,
-		PartyMax:      10,
-	}
-
-	// Check if the user is in a party
-	if party := parties.Get(userId); party != nil {
-		// Only set party size if there are 2 or more members
-		if len(party.GetMembers()) >= 2 {
-			discordStatusPayload.PartySize = len(party.GetMembers())
-		}
-	}
-
-	// Send the External.Discord.Status message
-	events.AddToQueue(GMCPOut{
-		UserId:  userId,
-		Module:  "External.Discord.Status",
-		Payload: discordStatusPayload,
-	})
-
-	mudlog.Debug("GMCP", "type", "Mudlet", "action", "Sent Discord status update", "userId", userId, "zone", room.Zone)
-}
-
 // isMudletClient checks if the given user ID is using a Mudlet client
 func (g *GMCPMudletModule) isMudletClient(userId int) bool {
 	if userId < 1 {
@@ -672,4 +799,23 @@ func (g *GMCPMudletModule) isMudletClient(userId int) bool {
 	}
 
 	return false
+}
+
+// partyUpdateHandler handles party membership changes and updates Discord status
+func (g *GMCPMudletModule) partyUpdateHandler(e events.Event) events.ListenerReturn {
+	evt, typeOk := e.(events.PartyUpdated)
+	if !typeOk {
+		mudlog.Error("Event", "Expected Type", "PartyUpdated", "Actual Type", e.Type())
+		return events.Cancel
+	}
+
+	// Update Discord status for all users in the party
+	for _, userId := range evt.UserIds {
+		// Only send updates to Mudlet clients
+		if g.isMudletClient(userId) {
+			g.sendDiscordStatus(userId)
+		}
+	}
+
+	return events.Continue
 }

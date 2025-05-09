@@ -13,10 +13,10 @@ map_version: "1"
 map_url: "https://github.com/GoMudEngine/MudletMapper/releases/latest/download/gomud.dat"
 
 # Discord Rich Presence configuration
-discord_application_id: "1298377884154724412"
-discord_invite_url: "https://discord.gg/FaauSYej3n"
-discord_large_image_key: "server-icon"
-discord_details: "Playing on GoMud"
+discord_application_id: "1298377884154724412" # Default GoMud Discord Server
+# Should the invite possible be in the normal config.yaml?
+discord_invite_url: "https://discord.gg/FaauSYej3n" # Default GoMud Discord Server
+discord_details: "Using GoMudEngine"
 discord_state: "Exploring the world"
-discord_game: "GoMud"
+discord_large_image_key: "server-icon"
 discord_small_image_key: "character-icon"
