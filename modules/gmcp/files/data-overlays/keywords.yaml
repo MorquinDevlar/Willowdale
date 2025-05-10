@@ -8,6 +8,8 @@ help:
       - checkclient
       - mudletmap
       - mudletui
+    integration:
+      - discord
 
 # Aliases for keywords when typing: help <keyword>
 help-aliases:

@@ -125,6 +125,7 @@ func init() {
 	g.plug.AddUserCommand("mudletmap", g.sendMapCommand, true, false)
 	g.plug.AddUserCommand("mudletui", g.sendUICommand, false, false)
 	g.plug.AddUserCommand("checkclient", g.checkClientCommand, true, false)
+	g.plug.AddUserCommand("discord", g.discordCommand, true, false)
 }
 
 // load handles loading configuration from the plugin's storage
@@ -557,6 +558,39 @@ func (g *GMCPMudletModule) sendDiscordStatusWithConfig(userId int, largeImageKey
 		return
 	}
 
+	// Check display preferences (default to true if not set)
+	showArea := user.GetConfigOption("discord_show_area")
+	if showArea == nil {
+		showArea = true
+	}
+	showParty := user.GetConfigOption("discord_show_party")
+	if showParty == nil {
+		showParty = true
+	}
+	showName := user.GetConfigOption("discord_show_name")
+	if showName == nil {
+		showName = true
+	}
+	showLevel := user.GetConfigOption("discord_show_level")
+	if showLevel == nil {
+		showLevel = true
+	}
+
+	// Build the details string based on preferences
+	detailsStr := details
+	if showName.(bool) || showLevel.(bool) {
+		detailsStr = ""
+		if showName.(bool) {
+			detailsStr = user.Character.Name
+		}
+		if showLevel.(bool) {
+			if detailsStr != "" {
+				detailsStr += " "
+			}
+			detailsStr += fmt.Sprintf("(lvl. %d)", user.Character.Level)
+		}
+	}
+
 	// Create a payload for Discord.Status
 	discordStatusPayload := struct {
 		Details       string `json:"details"`
@@ -568,20 +602,31 @@ func (g *GMCPMudletModule) sendDiscordStatusWithConfig(userId int, largeImageKey
 		PartySize     int    `json:"partysize,omitempty"`
 		PartyMax      int    `json:"partymax,omitempty"`
 	}{
-		Details:       details,
-		State:         fmt.Sprintf("Exploring %s", room.Zone),
+		Details:       detailsStr,
+		State:         "Exploring the world", // Default state
 		Game:          game,
 		LargeImageKey: largeImageKey,
 		SmallImageKey: smallImageKey,
 		StartTime:     user.GetConnectTime().Unix(),
 	}
 
+	// Only show area if enabled
+	if showArea.(bool) {
+		discordStatusPayload.State = fmt.Sprintf("Exploring %s", room.Zone)
+	}
+
 	// Check if the user is in a party
 	if party := parties.Get(userId); party != nil {
-		// Set party size for any party (including solo parties)
-		discordStatusPayload.PartySize = len(party.GetMembers())
-		discordStatusPayload.PartyMax = 10
-		discordStatusPayload.State = fmt.Sprintf("Party in %s", room.Zone)
+		// Only show party info if enabled
+		if showParty.(bool) {
+			discordStatusPayload.PartySize = len(party.GetMembers())
+			discordStatusPayload.PartyMax = 10
+			if showArea.(bool) {
+				discordStatusPayload.State = fmt.Sprintf("Party in %s", room.Zone)
+			} else {
+				discordStatusPayload.State = "In a party"
+			}
+		}
 	}
 
 	// Send the External.Discord.Status message
@@ -818,4 +863,139 @@ func (g *GMCPMudletModule) partyUpdateHandler(e events.Event) events.ListenerRet
 	}
 
 	return events.Continue
+}
+
+// showDiscordHelp displays the help text and current settings for the discord command
+func (g *GMCPMudletModule) showDiscordHelp(user *users.UserRecord) {
+	// Use the help system to show the discord help
+	usercommands.Help("discord", user, nil, 0)
+
+	// Show current settings
+	user.SendText("\n<ansi fg=\"subtitle\">Current settings:</ansi>\n")
+
+	showArea := user.GetConfigOption("discord_show_area")
+	if showArea == nil || showArea.(bool) {
+		user.SendText("  Area:  <ansi fg=\"green\">ENABLED</ansi>")
+	} else {
+		user.SendText("  Area:  <ansi fg=\"red\">DISABLED</ansi>")
+	}
+
+	showParty := user.GetConfigOption("discord_show_party")
+	if showParty == nil || showParty.(bool) {
+		user.SendText("  Party: <ansi fg=\"green\">ENABLED</ansi>")
+	} else {
+		user.SendText("  Party: <ansi fg=\"red\">DISABLED</ansi>")
+	}
+
+	showName := user.GetConfigOption("discord_show_name")
+	if showName == nil || showName.(bool) {
+		user.SendText("  Name:  <ansi fg=\"green\">ENABLED</ansi>")
+	} else {
+		user.SendText("  Name:  <ansi fg=\"red\">DISABLED</ansi>")
+	}
+
+	showLevel := user.GetConfigOption("discord_show_level")
+	if showLevel == nil || showLevel.(bool) {
+		user.SendText("  Level: <ansi fg=\"green\">ENABLED</ansi>")
+	} else {
+		user.SendText("  Level: <ansi fg=\"red\">DISABLED</ansi>")
+	}
+	user.SendText("\n")
+}
+
+// discordCommand handles the discord command for controlling Discord status display
+func (g *GMCPMudletModule) discordCommand(rest string, user *users.UserRecord, room *rooms.Room, flags events.EventFlag) (bool, error) {
+	// Only send if the client is Mudlet
+	connId := user.ConnectionId()
+	if gmcpData, ok := gmcpModule.cache.Get(connId); ok && gmcpData.Client.IsMudlet {
+		// Process command arguments
+		args := strings.Fields(rest)
+		if len(args) > 0 {
+			switch args[0] {
+			case "area":
+				if len(args) < 2 {
+					user.SendText("\nUsage: discord area on|off\n")
+					return true, nil
+				}
+				switch args[1] {
+				case "on":
+					user.SetConfigOption("discord_show_area", true)
+					user.SendText("\n<ansi fg=\"green\">Area display in Discord status enabled.</ansi>\n")
+					g.sendDiscordStatus(user.UserId)
+				case "off":
+					user.SetConfigOption("discord_show_area", false)
+					user.SendText("\n<ansi fg=\"yellow\">Area display in Discord status disabled.</ansi>\n")
+					g.sendDiscordStatus(user.UserId)
+				default:
+					user.SendText("\nUsage: discord area on|off\n")
+				}
+			case "party":
+				if len(args) < 2 {
+					user.SendText("\nUsage: discord party on|off\n")
+					return true, nil
+				}
+				switch args[1] {
+				case "on":
+					user.SetConfigOption("discord_show_party", true)
+					user.SendText("\n<ansi fg=\"green\">Party display in Discord status enabled.</ansi>\n")
+					g.sendDiscordStatus(user.UserId)
+				case "off":
+					user.SetConfigOption("discord_show_party", false)
+					user.SendText("\n<ansi fg=\"yellow\">Party display in Discord status disabled.</ansi>\n")
+					g.sendDiscordStatus(user.UserId)
+				default:
+					user.SendText("\nUsage: discord party on|off\n")
+				}
+			case "name":
+				if len(args) < 2 {
+					user.SendText("\nUsage: discord name on|off\n")
+					return true, nil
+				}
+				switch args[1] {
+				case "on":
+					user.SetConfigOption("discord_show_name", true)
+					user.SendText("\n<ansi fg=\"green\">Character name display in Discord status enabled.</ansi>\n")
+					g.sendDiscordStatus(user.UserId)
+				case "off":
+					user.SetConfigOption("discord_show_name", false)
+					user.SendText("\n<ansi fg=\"yellow\">Character name display in Discord status disabled.</ansi>\n")
+					g.sendDiscordStatus(user.UserId)
+				default:
+					user.SendText("\nUsage: discord name on|off\n")
+				}
+			case "level":
+				if len(args) < 2 {
+					user.SendText("\nUsage: discord level on|off\n")
+					return true, nil
+				}
+				switch args[1] {
+				case "on":
+					user.SetConfigOption("discord_show_level", true)
+					user.SendText("\n<ansi fg=\"green\">Level display in Discord status enabled.</ansi>\n")
+					g.sendDiscordStatus(user.UserId)
+				case "off":
+					user.SetConfigOption("discord_show_level", false)
+					user.SendText("\n<ansi fg=\"yellow\">Level display in Discord status disabled.</ansi>\n")
+					g.sendDiscordStatus(user.UserId)
+				default:
+					user.SendText("\nUsage: discord level on|off\n")
+				}
+			default:
+				// Show help for unknown commands
+				g.showDiscordHelp(user)
+			}
+		} else {
+			// No arguments provided - show help
+			g.showDiscordHelp(user)
+		}
+
+		// Return true to indicate the command was handled
+		return true, nil
+	} else {
+		// Client is not Mudlet
+		user.SendText("\n<ansi fg=\"red\">This command is only available for Mudlet clients.</ansi> You are currently using: " + gmcpData.Client.Name + "\n")
+	}
+
+	// Command was handled
+	return true, nil
 }
