@@ -11,7 +11,7 @@ The <ansi fg="command">mudletui</ansi> command allows Mudlet client users to man
   <ansi fg="command">mudletui hide</ansi>    - Hides automatic Mudlet UI prompts when logging in
   <ansi fg="command">mudletui show</ansi>    - Re-enables automatic Mudlet UI prompts when logging in
 
-<ansi fg="subtitle">NOTES:</ansi>
+<ansi fg="yellow-bold">Notes:</ansi>
 - These commands only work if you are using a Mudlet client
 - The UI package enhances your gameplay experience with custom windows and controls
 - If the installation doesn't work automatically, check for prompts in your Mudlet client

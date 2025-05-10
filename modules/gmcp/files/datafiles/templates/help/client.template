@@ -10,7 +10,7 @@ This game supports various MUD clients with special features to enhance your gam
   <ansi fg="white-bold">Other Clients</ansi> - Basic support with standard MUD protocol features
     For the best experience, we recommend using a client that supports GMCP.
 
-<ansi fg="subtitle">GMCP FEATURES:</ansi>
+<ansi fg="yellow-bold">GMCP Features:</ansi>
 - Character information and status updates
 - Room and environment data
 - Communication channels

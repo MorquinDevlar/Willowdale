@@ -513,29 +513,35 @@ func (g *GMCPMudletModule) sendMudletConfig(userId int) {
 		return
 	}
 
-	// Get Discord config values - only what we need for Discord.Info
-	appID, inviteURL, largeImageKey, details, state, game, smallImageKey := g.getDiscordConfig()
+	// Check if Discord.Info is enabled
+	enableInfo := user.GetConfigOption("discord_enable_info")
+	if enableInfo == nil || enableInfo.(bool) {
+		// Get Discord config values - only what we need for Discord.Info
+		appID, inviteURL, largeImageKey, details, state, game, smallImageKey := g.getDiscordConfig()
 
-	// Create a payload for Discord.Info - only applicationid and inviteurl
-	discordInfoPayload := struct {
-		ApplicationID string `json:"applicationid"`
-		InviteURL     string `json:"inviteurl"`
-	}{
-		ApplicationID: appID,
-		InviteURL:     inviteURL,
+		// Create a payload for Discord.Info - only applicationid and inviteurl
+		discordInfoPayload := struct {
+			ApplicationID string `json:"applicationid"`
+			InviteURL     string `json:"inviteurl"`
+		}{
+			ApplicationID: appID,
+			InviteURL:     inviteURL,
+		}
+
+		// Send the External.Discord.Info message
+		events.AddToQueue(GMCPOut{
+			UserId:  userId,
+			Module:  "External.Discord.Info",
+			Payload: discordInfoPayload,
+		})
+
+		// Send the Discord Status information with the config values we already have
+		g.sendDiscordStatusWithConfig(userId, largeImageKey, details, state, game, smallImageKey)
+	} else {
+		mudlog.Debug("GMCP", "type", "Mudlet", "action", "Discord.Info package sending disabled for user", "userId", userId)
 	}
 
-	// Send the External.Discord.Info message
-	events.AddToQueue(GMCPOut{
-		UserId:  userId,
-		Module:  "External.Discord.Info",
-		Payload: discordInfoPayload,
-	})
-
-	// Send the Discord Status information with the config values we already have
-	g.sendDiscordStatusWithConfig(userId, largeImageKey, details, state, game, smallImageKey)
-
-	mudlog.Info("GMCP", "type", "Mudlet", "action", "Sent Mudlet package config and Discord info", "userId", userId)
+	mudlog.Info("GMCP", "type", "Mudlet", "action", "Sent Mudlet package config", "userId", userId)
 }
 
 // sendDiscordStatusWithConfig sends the current Discord status information to the client using provided config values
@@ -548,6 +554,13 @@ func (g *GMCPMudletModule) sendDiscordStatusWithConfig(userId int, largeImageKey
 	user := users.GetByUserId(userId)
 	if user == nil {
 		mudlog.Error("GMCP", "type", "Mudlet", "action", "Failed to get user record for Discord status", "userId", userId)
+		return
+	}
+
+	// Check if Discord.Status is enabled
+	enableStatus := user.GetConfigOption("discord_enable_status")
+	if enableStatus != nil && !enableStatus.(bool) {
+		mudlog.Debug("GMCP", "type", "Mudlet", "action", "Discord.Status package sending disabled for user", "userId", userId)
 		return
 	}
 
@@ -587,7 +600,11 @@ func (g *GMCPMudletModule) sendDiscordStatusWithConfig(userId int, largeImageKey
 			if detailsStr != "" {
 				detailsStr += " "
 			}
-			detailsStr += fmt.Sprintf("(lvl. %d)", user.Character.Level)
+			if showName.(bool) {
+				detailsStr += fmt.Sprintf("(lvl. %d)", user.Character.Level)
+			} else {
+				detailsStr += fmt.Sprintf("Level %d", user.Character.Level)
+			}
 		}
 	}
 
@@ -622,9 +639,9 @@ func (g *GMCPMudletModule) sendDiscordStatusWithConfig(userId int, largeImageKey
 			discordStatusPayload.PartySize = len(party.GetMembers())
 			discordStatusPayload.PartyMax = 10
 			if showArea.(bool) {
-				discordStatusPayload.State = fmt.Sprintf("Party in %s", room.Zone)
+				discordStatusPayload.State = fmt.Sprintf("Group in %s", room.Zone)
 			} else {
-				discordStatusPayload.State = "In a party"
+				discordStatusPayload.State = "In group"
 			}
 		}
 	}
@@ -692,26 +709,34 @@ func (g *GMCPMudletModule) discordStatusRequestHandler(e events.Event) events.Li
 	// Get Discord config values once
 	appID, inviteURL, largeImageKey, details, state, game, smallImageKey := g.getDiscordConfig()
 
-	// Create a payload for Discord.Info - only applicationid and inviteurl
-	discordInfoPayload := struct {
-		ApplicationID string `json:"applicationid"`
-		InviteURL     string `json:"inviteurl"`
-	}{
-		ApplicationID: appID,
-		InviteURL:     inviteURL,
-	}
+	// Check if Discord.Info is enabled
+	enableInfo := user.GetConfigOption("discord_enable_info")
+	if enableInfo == nil || enableInfo.(bool) {
+		// Create a payload for Discord.Info - only applicationid and inviteurl
+		discordInfoPayload := struct {
+			ApplicationID string `json:"applicationid"`
+			InviteURL     string `json:"inviteurl"`
+		}{
+			ApplicationID: appID,
+			InviteURL:     inviteURL,
+		}
 
-	// Send the External.Discord.Info message
-	events.AddToQueue(GMCPOut{
-		UserId:  userId,
-		Module:  "External.Discord.Info",
-		Payload: discordInfoPayload,
-	})
+		// Send the External.Discord.Info message
+		events.AddToQueue(GMCPOut{
+			UserId:  userId,
+			Module:  "External.Discord.Info",
+			Payload: discordInfoPayload,
+		})
+
+		mudlog.Debug("GMCP", "type", "Mudlet", "action", "Sent Discord Info in response to request", "userId", userId)
+	} else {
+		mudlog.Debug("GMCP", "type", "Mudlet", "action", "Discord.Info package sending disabled for user", "userId", userId)
+	}
 
 	// Also send Discord Status information with the config values we already have
 	g.sendDiscordStatusWithConfig(userId, largeImageKey, details, state, game, smallImageKey)
 
-	mudlog.Info("GMCP", "type", "Mudlet", "action", "Sent Discord Info and Status in response to request", "userId", userId)
+	mudlog.Info("GMCP", "type", "Mudlet", "action", "Processed Discord status request", "userId", userId)
 	return events.Continue
 }
 
@@ -740,37 +765,54 @@ func (g *GMCPMudletModule) discordMessageHandler(e events.Event) events.Listener
 	// Log the message for debugging
 	mudlog.Info("Mudlet GMCP Discord", "type", evt.Command, "userId", userId, "payload", string(evt.Payload))
 
+	// Get user record for checking settings
+	user := users.GetByUserId(userId)
+	if user == nil {
+		mudlog.Error("GMCP", "type", "Mudlet", "action", "Failed to get user record for Discord message handling", "userId", userId)
+		return events.Cancel
+	}
+
 	switch evt.Command {
 	case "Hello":
-		// Only send Discord.Info on Hello, as we don't have character info yet
-		discordInfoPayload := struct {
-			ApplicationID string `json:"applicationid"`
-			InviteURL     string `json:"inviteurl"`
-		}{
-			ApplicationID: g.config.DiscordApplicationID,
-			InviteURL:     g.config.DiscordInviteURL,
+		// Check if Discord.Info is enabled
+		enableInfo := user.GetConfigOption("discord_enable_info")
+		if enableInfo == nil || enableInfo.(bool) {
+			// Only send Discord.Info on Hello, as we don't have character info yet
+			discordInfoPayload := struct {
+				ApplicationID string `json:"applicationid"`
+				InviteURL     string `json:"inviteurl"`
+			}{
+				ApplicationID: g.config.DiscordApplicationID,
+				InviteURL:     g.config.DiscordInviteURL,
+			}
+
+			// Send the External.Discord.Info message
+			events.AddToQueue(GMCPOut{
+				UserId:  userId,
+				Module:  "External.Discord.Info",
+				Payload: discordInfoPayload,
+			})
+
+			mudlog.Info("GMCP", "type", "Mudlet", "action", "Sent Discord Info in response to Hello", "userId", userId)
+		} else {
+			mudlog.Debug("GMCP", "type", "Mudlet", "action", "Discord.Info package sending disabled for user", "userId", userId)
 		}
-
-		// Send the External.Discord.Info message
-		events.AddToQueue(GMCPOut{
-			UserId:  userId,
-			Module:  "External.Discord.Info",
-			Payload: discordInfoPayload,
-		})
-
-		mudlog.Info("GMCP", "type", "Mudlet", "action", "Sent Discord Info in response to Hello", "userId", userId)
 	case "Get":
-		// Get the user record to check if we have character info
-		user := users.GetByUserId(userId)
-		if user == nil || user.Character == nil {
+		// Check if Discord.Status is enabled
+		enableStatus := user.GetConfigOption("discord_enable_status")
+		if enableStatus == nil || enableStatus.(bool) {
 			// If we don't have character info yet, don't send anything
-			mudlog.Debug("GMCP", "type", "Mudlet", "action", "Ignoring Discord.Get request (no character info yet)", "userId", userId)
-			return events.Continue
-		}
+			if user.Character == nil {
+				mudlog.Debug("GMCP", "type", "Mudlet", "action", "Ignoring Discord.Get request (no character info yet)", "userId", userId)
+				return events.Continue
+			}
 
-		// We have character info, so send Discord.Status
-		g.sendDiscordStatus(userId)
-		mudlog.Info("GMCP", "type", "Mudlet", "action", "Sent Discord Status in response to Get", "userId", userId)
+			// We have character info, so send Discord.Status
+			g.sendDiscordStatus(userId)
+			mudlog.Info("GMCP", "type", "Mudlet", "action", "Sent Discord Status in response to Get", "userId", userId)
+		} else {
+			mudlog.Debug("GMCP", "type", "Mudlet", "action", "Discord.Status package sending disabled for user", "userId", userId)
+		}
 	case "Status":
 		// Client sent a status update - just log it for now
 		// No specific handling needed
@@ -873,33 +915,50 @@ func (g *GMCPMudletModule) showDiscordHelp(user *users.UserRecord) {
 	// Show current settings
 	user.SendText("\n<ansi fg=\"subtitle\">Current settings:</ansi>\n")
 
+	enableInfo := user.GetConfigOption("discord_enable_info")
+	if enableInfo == nil || enableInfo.(bool) {
+		user.SendText("  Info:   <ansi fg=\"green\">ENABLED</ansi>")
+	} else {
+		user.SendText("  Info:   <ansi fg=\"red\">DISABLED</ansi>")
+	}
+
+	enableStatus := user.GetConfigOption("discord_enable_status")
+	if enableStatus == nil || enableStatus.(bool) {
+		user.SendText("  Status: <ansi fg=\"green\">ENABLED</ansi>")
+	} else {
+		user.SendText("  Status: <ansi fg=\"red\">DISABLED</ansi>")
+	}
+
+	user.SendText("")
+
 	showArea := user.GetConfigOption("discord_show_area")
 	if showArea == nil || showArea.(bool) {
-		user.SendText("  Area:  <ansi fg=\"green\">ENABLED</ansi>")
+		user.SendText("  Area:   <ansi fg=\"green\">ENABLED</ansi>")
 	} else {
-		user.SendText("  Area:  <ansi fg=\"red\">DISABLED</ansi>")
+		user.SendText("  Area:   <ansi fg=\"red\">DISABLED</ansi>")
 	}
 
 	showParty := user.GetConfigOption("discord_show_party")
 	if showParty == nil || showParty.(bool) {
-		user.SendText("  Party: <ansi fg=\"green\">ENABLED</ansi>")
+		user.SendText("  Party:  <ansi fg=\"green\">ENABLED</ansi>")
 	} else {
-		user.SendText("  Party: <ansi fg=\"red\">DISABLED</ansi>")
+		user.SendText("  Party:  <ansi fg=\"red\">DISABLED</ansi>")
 	}
 
 	showName := user.GetConfigOption("discord_show_name")
 	if showName == nil || showName.(bool) {
-		user.SendText("  Name:  <ansi fg=\"green\">ENABLED</ansi>")
+		user.SendText("  Name:   <ansi fg=\"green\">ENABLED</ansi>")
 	} else {
-		user.SendText("  Name:  <ansi fg=\"red\">DISABLED</ansi>")
+		user.SendText("  Name:   <ansi fg=\"red\">DISABLED</ansi>")
 	}
 
 	showLevel := user.GetConfigOption("discord_show_level")
 	if showLevel == nil || showLevel.(bool) {
-		user.SendText("  Level: <ansi fg=\"green\">ENABLED</ansi>")
+		user.SendText("  Level:  <ansi fg=\"green\">ENABLED</ansi>")
 	} else {
-		user.SendText("  Level: <ansi fg=\"red\">DISABLED</ansi>")
+		user.SendText("  Level:  <ansi fg=\"red\">DISABLED</ansi>")
 	}
+
 	user.SendText("\n")
 }
 
@@ -979,6 +1038,93 @@ func (g *GMCPMudletModule) discordCommand(rest string, user *users.UserRecord, r
 					g.sendDiscordStatus(user.UserId)
 				default:
 					user.SendText("\nUsage: discord level on|off\n")
+				}
+			case "info":
+				if len(args) < 2 {
+					user.SendText("\nUsage: discord info on|off\n")
+					return true, nil
+				}
+				switch args[1] {
+				case "on":
+					user.SetConfigOption("discord_enable_info", true)
+					user.SendText("\n<ansi fg=\"green\">Discord.Info package sending enabled.</ansi>\n")
+
+					// Send the Info package immediately if enabled
+					appID, inviteURL, _, _, _, _, _ := g.getDiscordConfig()
+					discordInfoPayload := struct {
+						ApplicationID string `json:"applicationid"`
+						InviteURL     string `json:"inviteurl"`
+					}{
+						ApplicationID: appID,
+						InviteURL:     inviteURL,
+					}
+
+					events.AddToQueue(GMCPOut{
+						UserId:  user.UserId,
+						Module:  "External.Discord.Info",
+						Payload: discordInfoPayload,
+					})
+				case "off":
+					user.SetConfigOption("discord_enable_info", false)
+					user.SendText("\n<ansi fg=\"yellow\">Discord.Info package sending disabled.</ansi>\n")
+
+					// Send an empty Discord.Info package to reset client cache
+					emptyInfoPayload := struct {
+						ApplicationID string `json:"applicationid"`
+						InviteURL     string `json:"inviteurl"`
+					}{
+						ApplicationID: "",
+						InviteURL:     "",
+					}
+
+					events.AddToQueue(GMCPOut{
+						UserId:  user.UserId,
+						Module:  "External.Discord.Info",
+						Payload: emptyInfoPayload,
+					})
+				default:
+					user.SendText("\nUsage: discord info on|off\n")
+				}
+			case "status":
+				if len(args) < 2 {
+					user.SendText("\nUsage: discord status on|off\n")
+					return true, nil
+				}
+				switch args[1] {
+				case "on":
+					user.SetConfigOption("discord_enable_status", true)
+					user.SendText("\n<ansi fg=\"green\">Discord.Status package sending enabled.</ansi>\n")
+					g.sendDiscordStatus(user.UserId)
+				case "off":
+					user.SetConfigOption("discord_enable_status", false)
+					user.SendText("\n<ansi fg=\"yellow\">Discord.Status package sending disabled.</ansi>\n")
+
+					// Send an empty Discord.Status package to reset client cache
+					emptyStatusPayload := struct {
+						Details       string `json:"details"`
+						State         string `json:"state"`
+						Game          string `json:"game"`
+						LargeImageKey string `json:"large_image_key"`
+						SmallImageKey string `json:"small_image_key"`
+						StartTime     int64  `json:"starttime"`
+						PartySize     int    `json:"partysize,omitempty"`
+						PartyMax      int    `json:"partymax,omitempty"`
+					}{
+						Details:       "",
+						State:         "",
+						Game:          "",
+						LargeImageKey: "",
+						SmallImageKey: "",
+						StartTime:     0,
+					}
+
+					events.AddToQueue(GMCPOut{
+						UserId:  user.UserId,
+						Module:  "External.Discord.Status",
+						Payload: emptyStatusPayload,
+					})
+				default:
+					user.SendText("\nUsage: discord status on|off\n")
 				}
 			default:
 				// Show help for unknown commands

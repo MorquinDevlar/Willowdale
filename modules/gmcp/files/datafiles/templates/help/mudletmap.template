@@ -6,7 +6,7 @@ The <ansi fg="command">mudletmap</ansi> command sends map data to Mudlet clients
 
   <ansi fg="command">mudletmap</ansi> - Sends or refreshes map data to your Mudlet client
 
-<ansi fg="subtitle">NOTES:</ansi>
+<ansi fg="yellow-bold">Notes:</ansi>
 - This command only works if you are using a Mudlet client
 - The map data helps with navigation and visualization of the game world
 - This command runs automatically when you log in with Mudlet
