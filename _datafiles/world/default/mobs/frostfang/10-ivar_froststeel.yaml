@@ -4,8 +4,10 @@ itemdropchance: 2
 hostile: false
 groups: 
   - frostfang-npc
+combatcommands:
+  - 'callforhelp 7:guard:calls for the guards.'
 idlecommands:
-  - 'say type `list` to see my wares'
+  - 'say type <ansi fg="command">list</ansi> to see my wares'
   - 'say If you''re looking to sell something, I may be interested... as long as it''s not too special or unique'
   - emote is counting his coins
   - emote watches you carefully

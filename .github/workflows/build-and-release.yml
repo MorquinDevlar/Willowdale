@@ -5,38 +5,46 @@ name: Build and release
 
 on:
   push:
-    branches: [master]
+    tags: ['v*.*.*']
 
 permissions:
   contents: write
 
 env:
   RELEASE_FILENAME: go-mud-release
+  RELEASE_VERSION: ${{ github.ref_name }}
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show version
+        run: echo 'Releasing version $RELEASE_VERSION'
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: 'go.mod'
+
+      - name: Run code generation
+        run: go generate ./...
 
       - name: Run tests
         run: go test ./...
 
   build:
     runs-on: ubuntu-latest
-    needs: "test"
+    needs: 'test'
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: 'go.mod'
 
       - name: Create bin directory
         run: mkdir -p bin/
@@ -45,19 +53,19 @@ jobs:
         run: cp -r _datafiles bin/
 
       - name: Build windows amd64
-        run: env GOOS=windows GOARCH=amd64 go build -v -o bin/go-mud-windows_x64.exe .
+        run: env GOOS=windows GOARCH=amd64 go build -v -ldflags "-X main.version=${{ env.RELEASE_VERSION }}" -o bin/go-mud-windows_x64.exe .
 
       - name: Build darwin/arm64
-        run: env GOOS=darwin GOARCH=arm64 go build -v -o bin/go-mud-darwin_arm64 .
+        run: env GOOS=darwin GOARCH=arm64 go build -v -ldflags "-X main.version=${{ env.RELEASE_VERSION }}" -o bin/go-mud-darwin_arm64 .
 
       - name: Build darwin/amd64
-        run: env GOOS=darwin GOARCH=amd64 go build -v -o bin/go-mud-darwin_x64 .
+        run: env GOOS=darwin GOARCH=amd64 go build -v -ldflags "-X main.version=${{ env.RELEASE_VERSION }}" -o bin/go-mud-darwin_x64 .
 
       - name: Build linux/amd64
-        run: env GOOS=linux GOARCH=amd64 go build -v -o bin/go-mud-linux_x64 .
+        run: env GOOS=linux GOARCH=amd64 go build -v -ldflags "-X main.version=${{ env.RELEASE_VERSION }}" -o bin/go-mud-linux_x64 .
 
       - name: Build linux/arm5
-        run: env GOOS=linux GOARCH=arm GOARM=5 go build -v -o bin/go-mud-linux_arm5 .
+        run: env GOOS=linux GOARCH=arm GOARM=5 go build -v -ldflags "-X main.version=${{ env.RELEASE_VERSION }}" -o bin/go-mud-linux_arm5 .
 
       - name: Upload bin
         uses: actions/upload-artifact@v4
@@ -84,22 +92,17 @@ jobs:
           echo "COMMIT_SHORT_SHA=$calculatedSha" >> $GITHUB_ENV
 
       - name: Archive release
-        uses: thedoctor0/zip-release@master
-        id: zip-binaries
-        with:
-          type: zip
-          directory: bin
-          filename: ${{ env.RELEASE_FILENAME }}-${{ env.COMMIT_SHORT_SHA }}.zip
+        run: zip -r bin/${{ env.RELEASE_FILENAME }}-${{ env.RELEASE_VERSION }}.zip bin/
 
       - name: Release with notes
         uses: softprops/action-gh-release@v1
         with:
-          files: bin/${{ env.RELEASE_FILENAME }}-${{ env.COMMIT_SHORT_SHA }}.zip
-          tag_name: release-${{ env.COMMIT_SHORT_SHA }}
+          files: bin/${{ env.RELEASE_FILENAME }}-${{ env.RELEASE_VERSION }}.zip
+          tag_name: ${{ env.RELEASE_VERSION }}
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  
+
   message:
     runs-on: ubuntu-latest
     steps:
@@ -118,6 +121,7 @@ jobs:
       uses: tsickert/discord-webhook@v7.0.0
       with:
         webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        embed-title: "🎉 New update on `master` branch: ${{ fromJson(steps.get_pr_data.outputs.result).title }}"
-        embed-description: "${{ fromJson(steps.get_pr_data.outputs.result).body }}"
-        embed-url: "${{ fromJson(steps.get_pr_data.outputs.result).html_url }}"
+        embed-title: ${{ steps.get_pr_data.outputs.result && fromJson(steps.get_pr_data.outputs.result).title || '🎉 New update on `master` branch' }}
+        embed-description: ${{ steps.get_pr_data.outputs.result && fromJson(steps.get_pr_data.outputs.result).body || 'No description provided.' }}
+        embed-url: ${{ steps.get_pr_data.outputs.result && fromJson(steps.get_pr_data.outputs.result).html_url || github.event.compare }}
+

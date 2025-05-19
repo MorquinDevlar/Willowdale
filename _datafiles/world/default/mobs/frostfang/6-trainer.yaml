@@ -4,6 +4,8 @@ itemdropchance: 2
 hostile: false
 groups: 
   - frostfang-npc
+combatcommands:
+  - 'callforhelp 7:guard:calls for the guards.'
 idlecommands:
   - 'say I can help you <ansi fg="command">train</ansi> new skills!'
   - 'say There are other trainers to be found in the world, with other skills to teach you.'

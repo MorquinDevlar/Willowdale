@@ -108,54 +108,31 @@ function onEnter(user, room) {
     teacherMob.Command('say I\'ll give you some tips to help you get started.', 2.0);
     teacherMob.Command('say In this area you\'ll learn the basics of inspecting your environment with the <ansi fg="command">look</ansi> command.', 3.0);
     teacherMob.Command('say type <ansi fg="command">look</ansi> and hit enter to see a description of the area you are in.', 5.0);
-}
 
+    return true;
+}
 
 function onExit(user , room) {
     // Destroy the guide (cleanup)
     destroyTeacher(room);
 }
 
-
-
 function onLoad(room) {
     canGoEast = false;
     commandNow = 0;
 }
 
-
-
 function getTeacher(room) {
-
-    var mobActor = null;
-
-    mobIds = room.GetMobs();
-    
-    for ( var i in mobIds ) {
-        mobActor = GetMob(mobIds[i]);
-        if ( mobActor.MobTypeId() == teacherMobId ) {
-            return mobActor;
-        }
-    }
-
-    mobActor = room.SpawnMob(teacherMobId);
+    var mobActor = room.GetMob(teacherMobId, true);
     mobActor.SetCharacterName(teacherName);
-
     return mobActor;
 }
 
 function destroyTeacher(room) {
-
-    var mobActor = null;
-
-    mobIds = room.GetMobs();
-    
-    for ( var i in mobIds ) {
-        mobActor = GetMob(mobIds[i]);
-        if ( mobActor.MobTypeId() == teacherMobId ) {
-            mobActor.Command(`suicide vanish`);
-        }
-    }
+    var mobActor = room.GetMob(teacherMobId);
+    if ( mobActor != null ) {
+        mobActor.Command(`suicide vanish`);
+    } 
 }
 
 function sendWorkingCommands(user) {

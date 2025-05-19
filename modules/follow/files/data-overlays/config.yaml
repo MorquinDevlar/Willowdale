@@ -1,0 +1,11 @@
+################################################################################
+# If modified, these settings will be copied into your config overrides 
+# folder under `Modules.follow`:
+#
+# Modules:
+#   follow:
+#     DefaultFollowPeriod: 1 real hour
+################################################################################
+# - DefaultFollowPeriod -
+#   Default time a "follow" wears off.
+DefaultFollowPeriod: 10 real minutes

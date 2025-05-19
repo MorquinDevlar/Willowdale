@@ -51,30 +51,29 @@ func HandleIdleMobs(e events.Event) events.ListenerReturn {
 			if mob.Character.KnowsFirstAid() {
 				mob.Command(`lookforaid`)
 			}
-		} else {
 
-			if mob.MaxWander > -1 && mob.WanderCount > mob.MaxWander {
+			return events.Continue
+		}
 
-				// Not charmed and far from home, and should never leave home.
-				// So go home.
-				mob.Command(`pathto home`)
+		if mob.MaxWander > -1 && mob.WanderCount > mob.MaxWander {
+			// Not charmed and far from home, and should never leave home.
+			// So go home.
+			mob.Command(`pathto home`)
+			return events.Continue
+		}
 
-			} else {
-
-				//
-				// Look for trouble
-				//
-
-				idleCmd := `lookfortrouble`
-				if util.Rand(100) < mob.ActivityLevel {
-					idleCmd = mob.GetIdleCommand()
-					if idleCmd == `` {
-						idleCmd = `lookfortrouble`
-					}
-				}
-				mob.Command(idleCmd)
+		//
+		// Look for trouble
+		//
+		idleCmd := `lookfortrouble`
+		if util.Rand(100) < mob.ActivityLevel {
+			idleCmd = mob.GetIdleCommand()
+			if idleCmd == `` {
+				idleCmd = `lookfortrouble`
 			}
 		}
+		mob.Command(idleCmd)
+
 	}
 
 	return events.Continue

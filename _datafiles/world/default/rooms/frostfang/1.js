@@ -1,6 +1,18 @@
 
 mapSignData = "";
 
+function onEnter(user, room) {
+
+    // Special case for if the player left the game while in jail.
+    // The ephemeral room gets destroyed and the player gets sent back to TS
+    // From here we can put them back in jail.
+    if ( user.TimerExists("jail") ) {
+        user.MoveRoom(1003);
+        return false;
+    }
+    return true;
+}
+
 // Generic Command Handler
 function onCommand(cmd, rest, user, room) {
 

@@ -11,7 +11,7 @@ function onEnter(user, room) {
 
     nextSpawnRound = lastSpawnRound + UtilGetSecondsToRounds(30);
     if ( lastSpawnRound > 0 && roundNow < nextSpawnRound ) {
-        return;
+        return true;
     }
 
     allItems = room.GetItems();
@@ -20,7 +20,7 @@ function onEnter(user, room) {
     for ( i=0; i<allItems.length; i++ ) {
         if ( allItems[i].ItemId() == 10016 ) {
             oarExists = true;
-            return;
+            return true;
         }
     }
 
@@ -28,6 +28,8 @@ function onEnter(user, room) {
         room.SpawnItem(10016, false);
         lastSpawnRound = roundNow;
     }
+
+    return true;
 }
 
 

@@ -5,6 +5,8 @@ hostile: false
 maxwander: 0
 groups: 
   - frostfang-npc
+combatcommands:
+  - 'callforhelp 7:guard:calls for the guards.'
 idlecommands:
   - 'emote checks the edge of their blade.'
   - 'emote inspects the training equipment'

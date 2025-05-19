@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/GoMudEngine/GoMud/internal/events"
+	"github.com/GoMudEngine/GoMud/internal/gametime"
 	"github.com/GoMudEngine/GoMud/internal/mobs"
 	"github.com/GoMudEngine/GoMud/internal/parties"
 	"github.com/GoMudEngine/GoMud/internal/plugins"
@@ -39,9 +40,10 @@ func init() {
 	// how to use a struct
 	//
 	f := FollowModule{
-		plug:      plugins.New(`follow`, `1.0`),
-		followed:  make(map[followId][]followId),
-		followers: make(map[followId]followId),
+		plug:         plugins.New(`follow`, `1.0`),
+		followed:     make(map[followId][]followId),
+		followers:    make(map[followId]followId),
+		followLimits: make(map[followId]uint64),
 	}
 
 	//
@@ -65,8 +67,11 @@ func init() {
 
 	events.RegisterListener(events.RoomChange{}, f.roomChangeHandler)
 	events.RegisterListener(events.PlayerDespawn{}, f.playerDespawnHandler)
+	events.RegisterListener(events.MobDeath{}, f.onMobDeath)
+	events.RegisterListener(events.PlayerDeath{}, f.onPlayerDeath)
 	events.RegisterListener(events.MobIdle{}, f.idleMobHandler, events.First)
 	events.RegisterListener(events.PartyUpdated{}, f.onPartyChange)
+	events.RegisterListener(events.NewRound{}, f.onNewRound)
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -83,8 +88,9 @@ type FollowModule struct {
 	// Keep a reference to the plugin when we create it so that we can call ReadBytes() and WriteBytes() on it.
 	plug *plugins.Plugin
 
-	followed  map[followId][]followId // key => who's followed. value ([]followId{}) => who's following them
-	followers map[followId]followId   // key => who's following someone. value => who's being followed
+	followed     map[followId][]followId // key => who's followed. value ([]followId{}) => who's following them
+	followers    map[followId]followId   // key => who's following someone. value => who's being followed
+	followLimits map[followId]uint64     // Key => follower Id, value => round the follow forcibly ends
 }
 
 // Intended to be invoked by a script.
@@ -119,7 +125,7 @@ func (f *FollowModule) getFollowers(followTarget followId) []followId {
 }
 
 // Add a single follower to a target
-func (f *FollowModule) startFollow(followTarget followId, followSource followId) {
+func (f *FollowModule) startFollow(followTarget followId, followSource followId, followCutoffRoundId ...uint64) {
 
 	// Make sure they no longer follow whoever they were before.
 	f.stopFollowing(followSource)
@@ -130,6 +136,10 @@ func (f *FollowModule) startFollow(followTarget followId, followSource followId)
 	}
 
 	f.followed[followTarget] = append(f.followed[followTarget], followSource)
+
+	if len(followCutoffRoundId) > 0 && followCutoffRoundId[0] > 0 {
+		f.followLimits[followSource] = followCutoffRoundId[0]
+	}
 }
 
 // Remove a single follower from whoever they are following (if any)
@@ -155,6 +165,9 @@ func (f *FollowModule) stopFollowing(followSource followId) followId {
 		}
 	}
 
+	// If there was a limit, delete it.
+	delete(f.followLimits, followSource)
+
 	return wasFollowing
 }
 
@@ -170,6 +183,66 @@ func (f *FollowModule) loseFollowers(followTarget followId) []followId {
 //
 // Event Handlers
 //
+
+func (f followId) getFollowIdInstance() (user *users.UserRecord, mob *mobs.Mob) {
+	if f.userId > 0 {
+		return users.GetByUserId(f.userId), nil
+	}
+	if f.mobInstanceId > 0 {
+		return nil, mobs.GetInstance(f.mobInstanceId)
+	}
+	return nil, nil
+}
+
+// Does a cleanup check every round for any follows that have expired.
+func (f *FollowModule) onNewRound(e events.Event) events.ListenerReturn {
+
+	evt := e.(events.NewRound)
+
+	for fId, rNum := range f.followLimits {
+		if rNum > evt.RoundNumber {
+			continue
+		}
+
+		wasFollowing := f.stopFollowing(fId)
+
+		followTargetUser, followTargetMob := wasFollowing.getFollowIdInstance()
+		followSourceUser, followSourceMob := fId.getFollowIdInstance()
+
+		// user being followed?
+		if followTargetUser != nil {
+
+			// user doing the following? Tell both users
+			if followSourceUser != nil {
+				followTargetUser.SendText(fmt.Sprintf(`<ansi fg="username">%s</ansi> stopped following you.`, followSourceUser.Character.Name))
+				followSourceUser.SendText(fmt.Sprintf(`You are no longer following <ansi fg="username">%s</ansi>.`, followTargetUser.Character.Name))
+				continue
+			}
+
+			// mob doing the following? tell the target user
+			if followSourceMob != nil {
+				followTargetUser.SendText(fmt.Sprintf(`<ansi fg="mobname">%s</ansi> stopped following you.`, followSourceMob.Character.Name))
+				continue
+			}
+
+			continue
+		}
+
+		// mob being followed?
+		if followTargetMob != nil {
+
+			// user doing the following? Tell the following user
+			if followSourceUser != nil {
+				followSourceUser.SendText(fmt.Sprintf(`You are no longer following <ansi fg="mobname">%s</ansi>.`, followTargetMob.Character.Name))
+			}
+
+			continue
+		}
+
+	}
+
+	return events.Continue
+}
 
 // If players make changes (into/out of party)
 // Just make sure they aren't following anyone.
@@ -245,6 +318,9 @@ func (f *FollowModule) roomChangeHandler(e events.Event) events.ListenerReturn {
 				if mob := mobs.GetInstance(fId.mobInstanceId); mob != nil {
 					if fromRoom.RoomId == mob.Character.RoomId {
 						mob.Command(followExitName, .25)
+						// Count follows as wandering
+						// This way if following ends, many/most mobs will head home.
+						mob.WanderCount++
 						continue
 					}
 
@@ -285,6 +361,28 @@ func (f *FollowModule) playerDespawnHandler(e events.Event) events.ListenerRetur
 	return events.Continue
 }
 
+func (f *FollowModule) onMobDeath(e events.Event) events.ListenerReturn {
+	evt, typeOk := e.(events.MobDeath)
+	if !typeOk {
+		return events.Cancel
+	}
+
+	f.loseFollowers(followId{mobInstanceId: evt.MobId})
+
+	return events.Continue
+}
+
+func (f *FollowModule) onPlayerDeath(e events.Event) events.ListenerReturn {
+	evt, typeOk := e.(events.PlayerDeath)
+	if !typeOk {
+		return events.Cancel
+	}
+
+	f.loseFollowers(followId{userId: evt.UserId})
+
+	return events.Continue
+}
+
 //
 // Commands
 //
@@ -305,10 +403,24 @@ func (f *FollowModule) followUserCommand(rest string, user *users.UserRecord, ro
 
 	followTargetName := args[0]
 	followAction := `follow`
+	followEndRound := uint64(0)
 
 	if rest == `stop` || rest == `lose` {
 		followAction = rest
 		followTargetName = ``
+	}
+
+	gd := gametime.GetDate(util.GetRoundCount())
+
+	if len(args) > 1 {
+		followEndRound = gd.AddPeriod(strings.Join(args[1:], ` `))
+	} else if followPeriod, ok := f.plug.Config.Get(`DefaultFollowPeriod`).(string); ok {
+		followEndRound = gd.AddPeriod(followPeriod)
+	}
+
+	// in case something went wrong, we still want to cap it.
+	if followEndRound <= util.GetRoundCount() {
+		followEndRound = gd.AddPeriod(`5 real minutes`)
 	}
 
 	userId, mobInstId := 0, 0
@@ -379,7 +491,7 @@ func (f *FollowModule) followUserCommand(rest string, user *users.UserRecord, ro
 	// Default behavior is follow
 	if followCommandTarget.userId > 0 {
 
-		f.startFollow(followCommandTarget, followCommandSource)
+		f.startFollow(followCommandTarget, followCommandSource, followEndRound)
 
 		targetUser := users.GetByUserId(followCommandTarget.userId)
 
@@ -397,7 +509,7 @@ func (f *FollowModule) followUserCommand(rest string, user *users.UserRecord, ro
 		if targetMob.HatesAlignment(user.Character.Alignment) {
 			user.SendText(fmt.Sprintf(`<ansi fg="mobname">%s</ansi> won't let you follow them.`, targetMob.Character.Name))
 		} else {
-			f.startFollow(followCommandTarget, followCommandSource)
+			f.startFollow(followCommandTarget, followCommandSource, followEndRound)
 
 			user.SendText(fmt.Sprintf(`You start following <ansi fg="mobname">%s</ansi>.`, targetMob.Character.Name))
 		}
@@ -420,10 +532,24 @@ func (f *FollowModule) followMobCommand(rest string, mob *mobs.Mob, room *rooms.
 
 	followTargetName := args[0]
 	followAction := `follow`
+	followEndRound := uint64(0)
 
 	if rest == `stop` || rest == `lose` {
 		followAction = rest
 		followTargetName = ``
+	}
+
+	gd := gametime.GetDate(util.GetRoundCount())
+
+	if len(args) > 1 {
+		followEndRound = gd.AddPeriod(strings.Join(args[1:], ` `))
+	} else if followPeriod, ok := f.plug.Config.Get(`DefaultFollowPeriod`).(string); ok {
+		followEndRound = gd.AddPeriod(followPeriod)
+	}
+
+	// in case something went wrong, we still want to cap it.
+	if followEndRound <= util.GetRoundCount() {
+		followEndRound = gd.AddPeriod(`5 real minutes`)
 	}
 
 	userId, mobInstId := 0, 0
@@ -484,7 +610,7 @@ func (f *FollowModule) followMobCommand(rest string, mob *mobs.Mob, room *rooms.
 
 	if followCommandTarget.userId > 0 {
 
-		f.startFollow(followCommandTarget, followCommandSource)
+		f.startFollow(followCommandTarget, followCommandSource, followEndRound)
 
 		targetUser := users.GetByUserId(followCommandTarget.userId)
 
@@ -495,7 +621,7 @@ func (f *FollowModule) followMobCommand(rest string, mob *mobs.Mob, room *rooms.
 
 	if followCommandTarget.mobInstanceId > 0 {
 
-		f.startFollow(followCommandTarget, followCommandSource)
+		f.startFollow(followCommandTarget, followCommandSource, followEndRound)
 
 		return true, nil
 	}

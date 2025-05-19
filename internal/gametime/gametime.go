@@ -17,6 +17,22 @@ var (
 	roundDateCache = map[uint64]GameDate{}
 )
 
+type RoundTimer struct {
+	RoundStart uint64 `yaml:"roundstart,omitempty"`
+	Period     string `yaml:"period,omitempty"`
+	gd         GameDate
+}
+
+func (r RoundTimer) Expired() bool {
+	if r.Period == `` || r.RoundStart == 0 {
+		return true
+	}
+	if r.gd.RoundNumber == 0 {
+		r.gd = GetDate(r.RoundStart)
+	}
+	return r.gd.AddPeriod(r.Period) < util.GetRoundCount()
+}
+
 type GameDate struct {
 	// The round number this GameDate represents
 	RoundNumber      uint64
@@ -258,7 +274,11 @@ func (g GameDate) Add(adjustHours int, adjustDays int, adjustYears int) GameDate
 // nextPeriodRound := gd.AddPeriod(`10 days`)
 // Accepts: x years, x months, x weeks, x days, x hours, x rounds
 // If `IRL` or `real` are in the mix, such as `x irl days` or `x days irl`, then it will use real world time
-func (g GameDate) AddPeriod(str string) uint64 {
+func (g GameDate) AddPeriod(periodStr string) uint64 {
+
+	if periodStr == `` {
+		return g.RoundNumber
+	}
 
 	qty := 1
 	timeStr := ``
@@ -267,7 +287,7 @@ func (g GameDate) AddPeriod(str string) uint64 {
 	roundsPerRealHour := 0
 	roundsPerRealMinute := 0
 
-	parts := strings.Split(strings.ToLower(str), ` `)
+	parts := strings.Split(strings.ToLower(periodStr), ` `)
 	if len(parts) == 1 { // e.g. 2
 
 		// try and parse a number, if not a number, must be a str
@@ -434,7 +454,6 @@ func (g GameDate) AddPeriod(str string) uint64 {
 
 		// Failover to rounds
 		return g.RoundNumber + uint64(qty)
-
 	}
 
 	// Assume rounds?

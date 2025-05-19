@@ -66,6 +66,7 @@ func Go(rest string, user *users.UserRecord, room *rooms.Room, flags events.Even
 		originRoomId := user.Character.RoomId
 
 		exitInfo, _ := room.GetExitInfo(exitName)
+
 		if exitInfo.Lock.IsLocked() {
 
 			lockId := fmt.Sprintf(`%d-%s`, room.RoomId, exitName)
@@ -345,10 +346,10 @@ func Go(rest string, user *users.UserRecord, room *rooms.Room, flags events.Even
 			}
 
 			handled = true
-			//Look(``, user, destRoom, events.CmdSecretly) // Do a secret look.
-			user.CommandFlagged(`look`, events.CmdSecretly) // Do a secret look.
 
-			scripting.TryRoomScriptEvent(`onEnter`, user.UserId, destRoom.RoomId)
+			if doLook, err := scripting.TryRoomScriptEvent(`onEnter`, user.UserId, destRoom.RoomId); err != nil || doLook {
+				Look(``, user, destRoom, events.CmdSecretly)
+			}
 
 			room.PlaySound(`room-exit`, `movement`, user.UserId)
 			destRoom.PlaySound(`room-enter`, `movement`, user.UserId)

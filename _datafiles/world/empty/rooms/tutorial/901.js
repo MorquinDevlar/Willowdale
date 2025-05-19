@@ -111,6 +111,8 @@ function onEnter(user, room) {
     
     teacherMob.Command('say Hi! I\'m here to teach you about inspecting your characters information.', 1.0);
     teacherMob.Command('say To get a detailed view of a LOT of information all at once, type <ansi fg="command">status</ansi> and hit enter.', 2.0);
+
+    return true;
 }
 
 
@@ -129,37 +131,17 @@ function onLoad(room) {
     commandNow = 0;
 }
 
-
 function getTeacher(room) {
-
-    var mobActor = null;
-
-    mobIds = room.GetMobs();
-    
-    for ( var i in mobIds ) {
-        mobActor = GetMob(mobIds[i]);
-        if ( mobActor.MobTypeId() == teacherMobId ) {
-            return mobActor;
-        }
-    }
-
-    mobActor = room.SpawnMob(teacherMobId);
+    var mobActor = room.GetMob(teacherMobId, true);
     mobActor.SetCharacterName(teacherName);
-
     return mobActor;
 }
+
 function destroyTeacher(room) {
-
-    var mobActor = null;
-
-    mobIds = room.GetMobs();
-    
-    for ( var i in mobIds ) {
-        mobActor = GetMob(mobIds[i]);
-        if ( mobActor.MobTypeId() == teacherMobId ) {
-            mobActor.Command(`suicide vanish`);
-        }
-    }
+    var mobActor = room.GetMob(teacherMobId);
+    if ( mobActor != null ) {
+        mobActor.Command(`suicide vanish`);
+    } 
 }
 
 function sendWorkingCommands(user) {

@@ -4,7 +4,9 @@ itemdropchance: 2
 hostile: false
 maxwander: 20
 groups: 
-  - frostfang-npc
+  - frostfang-law
+combatcommands:
+  - 'callforhelp 5:puts their fingers to their mouth and whistle loudly.'
 idlecommands:
   - 'emote mumbles something about the weather'
   - 'wander'

@@ -42,6 +42,50 @@ func Attack(rest string, mob *mobs.Mob, room *rooms.Room) (bool, error) {
 				}
 			}
 		}
+	} else if rest[0] == '*' { // choose a target at random. Friend or foe.
+
+		if rest == `*` { // * ANYONE
+
+			allMobs := []int{}
+			allPlayers := room.GetPlayers()
+			for _, mobInstanceId := range room.GetMobs() {
+				if mobInstanceId == mob.InstanceId {
+					continue
+				}
+				allMobs = append(allMobs, mobInstanceId)
+			}
+
+			randomSelection := util.Rand(len(allMobs) + len(allPlayers))
+
+			if randomSelection < len(allMobs) {
+				attackMobInstanceId = allMobs[randomSelection]
+			} else {
+				randomSelection -= len(allMobs)
+				attackPlayerId = allPlayers[randomSelection]
+			}
+
+		} else if rest == `*mob` { // *mob ANY MOB
+
+			allMobs := []int{}
+			for _, mobInstanceId := range room.GetMobs() {
+				if mobInstanceId == mob.InstanceId {
+					continue
+				}
+				allMobs = append(allMobs, mobInstanceId)
+			}
+
+			if len(allMobs) > 0 {
+				attackMobInstanceId = allMobs[util.Rand(len(allMobs))]
+			}
+
+		} else { // *user etc. ANY PLAYER
+
+			if allPlayers := room.GetPlayers(); len(allPlayers) > 0 {
+				attackPlayerId = allPlayers[util.Rand(len(allPlayers))]
+			}
+
+		}
+
 	} else {
 		attackPlayerId, attackMobInstanceId = room.FindByName(rest)
 	}
@@ -65,6 +109,9 @@ func Attack(rest string, mob *mobs.Mob, room *rooms.Room) (bool, error) {
 		u := users.GetByUserId(attackPlayerId)
 
 		if u != nil {
+
+			// Track that they've attacked this player
+			mob.PlayerAttacked(attackPlayerId)
 
 			mob.Character.SetAggro(attackPlayerId, 0, characters.DefaultAttack)
 

@@ -52,15 +52,42 @@ func Build(rest string, user *users.UserRecord, room *rooms.Room, flags events.E
 			}
 		}
 
-		// #build room north <south>
+		// build room north <south>
+		// build room north-x2 <south-x2>
+		// build room attic:up <down>
 		if args[0] == "room" {
 
-			exitName := args[1]
-			mapDirection := exitName
+			var err error
 
-			returnName := ""
+			// Prep exit parts of command
+			// There are special exit names (defined in internal/mapper/mapper.go ) that
+			// translate to compass directions such as east-x3 (east 3 "room spaces" away)
+			// exit names can be freeform, but if they are to show up on a map they must have
+			// a compass direction. This can be achieved by appending ":direction" to an exit name
+			// such as: "attic:up" or "zipline:east-x3"
+			exitName := args[1]
+			exitDirection := exitName // A special exit name that corresponds to special distances
+			returnExitName := ``
+			returnExitDirection := ``
+
+			if exitName, exitDirection, err = mapper.AdjustExitName(exitName); err != nil {
+				user.SendText(err.Error())
+				return true, err
+			}
+
+			// Prep optional "return exit" parts of command
+			// If not supplied, defaults to a possible reciprocal exit
 			if len(args) > 2 {
-				returnName = args[2]
+				returnExitName = args[2]
+			} else {
+				returnExitName = mapper.GetReciprocalExit(exitDirection)
+			}
+
+			if returnExitName != `` {
+				if returnExitName, returnExitDirection, err = mapper.AdjustExitName(returnExitName); err != nil {
+					user.SendText(err.Error())
+					return true, err
+				}
 			}
 
 			// #build (room north) - room+north are two args
@@ -75,11 +102,12 @@ func Build(rest string, user *users.UserRecord, room *rooms.Room, flags events.E
 				return true, err
 			}
 
+			// Is there a room in that direction already, even if blocked by a wall?
 			gotoRoomId, _ := rMapper.FindAdjacentRoom(user.Character.RoomId, exitName, 1)
 
 			if gotoRoomId == 0 {
 
-				newRoom, err := rooms.BuildRoom(user.Character.RoomId, exitName, mapDirection)
+				newRoom, err := rooms.BuildRoom(user.Character.RoomId, exitName, exitDirection)
 
 				// If there was a problem building the room, send the error to the user before returning
 				if err != nil {
@@ -93,22 +121,13 @@ func Build(rest string, user *users.UserRecord, room *rooms.Room, flags events.E
 			} else {
 				destinationRoom = rooms.LoadRoom(gotoRoomId)
 				if _, ok := destinationRoom.Exits[exitName]; !ok {
-					rooms.ConnectRoom(user.Character.RoomId, destinationRoom.RoomId, exitName, mapDirection)
+					rooms.ConnectRoom(user.Character.RoomId, destinationRoom.RoomId, exitName, exitDirection)
 				}
 			}
 
 			// Connect the exit back
-			if len(returnName) > 0 {
-
-				returnMapDirection := returnName
-				if strings.Contains(returnName, `-`) {
-					returnMapDirection = returnName
-
-					parts := strings.Split(returnName, `-`)
-					returnName = parts[0]
-				}
-
-				rooms.ConnectRoom(destinationRoom.RoomId, user.Character.RoomId, returnName, returnMapDirection)
+			if len(returnExitName) > 0 {
+				rooms.ConnectRoom(destinationRoom.RoomId, user.Character.RoomId, returnExitName, returnExitDirection)
 			}
 
 			if err := rooms.MoveToRoom(user.UserId, destinationRoom.RoomId); err != nil {

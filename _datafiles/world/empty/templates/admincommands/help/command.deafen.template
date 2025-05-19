@@ -1,6 +1,6 @@
 The <ansi fg="command">deafen</ansi>/<ansi fg="command">undeafen</ansi> is for child safety.
 
-When a player is deafened, they cannot receive cusotm communcations via:
+When a player is deafened, they cannot receive custom communications via:
 <ansi fg="command">say</ansi>, <ansi fg="command">broadcast</ansi>, <ansi fg="command">whisper</ansi>, <ansi fg="command">emote</ansi>
 
 The only exception is that they can still receive whispers from admins or moderators.

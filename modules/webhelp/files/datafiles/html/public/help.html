@@ -1,0 +1,68 @@
+{{template "header" .}}
+
+<style>
+    h3.topic {
+        text-align:left;
+    }
+    div.webhelp-content {
+        color:#fff;
+        background-color:#000;
+        text-align:left;
+        padding: 5%;
+    }
+    div.webhelp-content a.topic {
+        color: #6b9d6e;
+        display: inline-block;
+        width: 20%;
+        margin-bottom: 1%;
+        margin-left: 3%;
+    }
+    div.webhelp-content a.topic.skill {
+        color: #ffdd00;
+    }
+    div.webhelp-content .error {
+        color:#ff0000;
+        font-weight:bold;
+    }
+    form.search input[type="text"] {
+        font-size: 18px;
+        line-height: 18px;
+        width: 300px;
+        height: 25px;
+        border: 0px;
+        margin: 0px;
+    }
+    form.search input[type="submit"] {
+        font-size: 18px;
+        line-height: 18px;
+        width: 100px;
+        height: 25px;
+        border: 0px;
+        padding: 0px;
+        margin: 0px 0px 0px 3px;
+    }
+</style>
+
+<div class="overlay">
+
+    <h3 class="topic">Help Topics</h3>
+    <div class="webhelp-content">
+
+        {{ $categories := .categories }}
+        {{ $topics := .topics }}
+        {{ range $i, $category := $categories }}
+            <h3 class="category">{{ $category }}</h2>
+            {{ $topics := (index $topics $category) }}
+            {{ range $j, $commandInfo := $topics }}
+                <a href="/help-details?search={{ $commandInfo.Command }}" class="topic {{ if eq $commandInfo.Type "skill" }}skill{{ end}}">{{ $commandInfo.Command }}</a>
+            {{ end }}
+        {{ end }}
+
+    </div>
+    <form class="search" action="/help-details">
+        <input type="text" name="search" placeholder="enter a search term"><input type="submit" value="Go!">
+    </form>
+
+</div>
+
+{{template "footer" .}}

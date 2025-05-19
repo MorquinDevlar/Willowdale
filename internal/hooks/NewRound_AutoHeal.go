@@ -3,6 +3,7 @@ package hooks
 import (
 	"fmt"
 
+	"github.com/GoMudEngine/GoMud/internal/configs"
 	"github.com/GoMudEngine/GoMud/internal/events"
 	"github.com/GoMudEngine/GoMud/internal/rooms"
 	"github.com/GoMudEngine/GoMud/internal/users"
@@ -22,6 +23,8 @@ func AutoHeal(e events.Event) events.ListenerReturn {
 		return events.Continue
 	}
 
+	deathRecoveryRoomId := int(configs.GetSpecialRoomsConfig().DeathRecoveryRoom)
+
 	onlineIds := users.GetOnlineUserIds()
 	for _, userId := range onlineIds {
 		user := users.GetByUserId(userId)
@@ -31,24 +34,26 @@ func AutoHeal(e events.Event) events.ListenerReturn {
 			continue
 		}
 
+		if user.Character.RoomId == deathRecoveryRoomId {
+			continue
+		}
+
 		healthStart := user.Character.Health
 
 		if user.Character.Health < 1 {
-			if user.Character.RoomId != 75 {
 
-				if user.Character.Health <= -10 {
+			if user.Character.Health <= -10 {
 
-					user.Command(`suicide`) // suicide drops all money/items and transports to land of the dead.
+				user.Command(`suicide`) // suicide drops all money/items and transports to land of the dead.
 
-				} else {
-					user.Character.Health--
-					user.SendText(`<ansi fg="red">you are bleeding out!</ansi>`)
-					if room := rooms.LoadRoom(user.Character.RoomId); room != nil {
-						room.SendText(fmt.Sprintf(`<ansi fg="username">%s</ansi> is <ansi fg="red">bleeding out</ansi>! Somebody needs to provide aid!`, user.Character.Name), user.UserId)
-					}
+			} else {
+				user.Character.Health--
+				user.SendText(`<ansi fg="red">you are bleeding out!</ansi>`)
+				if room := rooms.LoadRoom(user.Character.RoomId); room != nil {
+					room.SendText(fmt.Sprintf(`<ansi fg="username">%s</ansi> is <ansi fg="red">bleeding out</ansi>! Somebody needs to provide aid!`, user.Character.Name), user.UserId)
 				}
-
 			}
+
 		} else {
 
 			if user.Character.Health > 0 {

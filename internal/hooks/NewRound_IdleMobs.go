@@ -21,8 +21,6 @@ import (
 
 func IdleMobs(e events.Event) events.ListenerReturn {
 
-	mobPathAnnounce := false // useful for debugging purposes.
-
 	mc := configs.GetMemoryConfig()
 
 	maxBoredom := uint8(mc.MaxMobBoredom)
@@ -92,17 +90,11 @@ func IdleMobs(e events.Event) events.ListenerReturn {
 					continue
 				}
 
-				if mobPathAnnounce {
-					mob.Command(`say I'm beginning a new path.`)
-				}
 			} else {
 
 				// If their currentStep isn't actually the room they are in
 				// They've somehow been moved. Reclaculate a new path.
 				if currentStep.RoomId() != mob.Character.RoomId {
-					if mobPathAnnounce {
-						mob.Command(`say I seem to have wandered off my path.`)
-					}
 
 					reDoWaypoints := mob.Path.Waypoints()
 					if len(reDoWaypoints) > 0 {
@@ -118,12 +110,6 @@ func IdleMobs(e events.Event) events.ListenerReturn {
 					mob.Command(`pathto home`)
 
 					continue
-				}
-
-				if currentStep.Waypoint() {
-					if mobPathAnnounce {
-						mob.Command(`say I've reached a waypoint.`)
-					}
 				}
 			}
 
@@ -146,8 +132,8 @@ func IdleMobs(e events.Event) events.ListenerReturn {
 				continue
 			}
 
-			if mobPathAnnounce {
-				mob.Command(`say I'm.... done.`)
+			if mob.HomeRoomId == mob.Character.RoomId {
+				mob.WanderCount = 0
 			}
 
 		}

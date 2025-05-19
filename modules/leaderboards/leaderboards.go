@@ -3,6 +3,7 @@ package leaderboards
 import (
 	"embed"
 	"fmt"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -89,7 +90,7 @@ type LeaderboardModule struct {
 	LB_Kills      leaderboardData `yaml:"LB_Kills,omitempty"`
 }
 
-func (l *LeaderboardModule) webLeaderboardData() map[string]any {
+func (l *LeaderboardModule) webLeaderboardData(r *http.Request) map[string]any {
 
 	data := map[string]any{}
 

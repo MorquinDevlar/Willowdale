@@ -162,7 +162,7 @@ func (p pluginRegistry) WebRequest(r *http.Request) (html string, templateData m
 		html = string(b)
 
 		if pageData.DataFunction != nil {
-			templateData = pageData.DataFunction()
+			templateData = pageData.DataFunction(r)
 		}
 
 		return html, templateData, true

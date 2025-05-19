@@ -38,6 +38,8 @@ function onEnter(user ActorObject, room RoomObject) {
 ```
 
 `onEnter()` is called when a player enters the room.
+Return `false` to suppress showing the room description on arrival.
+
 
 |  Argument | Explanation |
 | --- | --- |
@@ -56,6 +58,20 @@ function onExit(user ActorObject, room RoomObject) {
 |  Argument | Explanation |
 | --- | --- |
 | user | [ActorObject](FUNCTIONS_ACTORS.md) |
+| room | [RoomObject](FUNCTIONS_ROOMS.md) |
+
+---
+
+```
+function onIdle(room RoomObject) {
+}
+```
+
+`onIdle()` is called when a round passes in a room that has players in it. 
+Returning true prevents generic idle actions from taking place.
+
+|  Argument | Explanation |
+| --- | --- |
 | room | [RoomObject](FUNCTIONS_ROOMS.md) |
 
 ---

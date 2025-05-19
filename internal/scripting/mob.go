@@ -22,6 +22,68 @@ func PruneMobVMs(instanceIds ...int) {
 
 }
 
+func TryPlayerDownedEvent(mobInstanceId int, downedPlayerId int) (bool, error) {
+	sMob := GetActor(0, mobInstanceId)
+	if sMob == nil {
+		return false, errors.New("mob not found")
+	}
+
+	vmw, err := getMobVM(sMob)
+	if err != nil {
+		return false, err
+	}
+
+	tUser := GetActor(downedPlayerId, 0)
+	if tUser == nil {
+		return false, errors.New("player not found")
+	}
+
+	timestart := time.Now()
+	defer func() {
+		mudlog.Debug("TryPlayerDownedEvent()", "mobInstanceId", mobInstanceId, "downedPlayerId", downedPlayerId, "time", time.Since(timestart))
+	}()
+
+	if onCommandFunc, ok := vmw.GetFunction(`onPlayerDowned`); ok {
+
+		tmr := time.AfterFunc(scriptRoomTimeout, func() {
+			vmw.VM.Interrupt(errTimeout)
+		})
+
+		sRoom := GetRoom(sMob.GetRoomId())
+
+		res, err := onCommandFunc(goja.Undefined(),
+			vmw.VM.ToValue(sMob),
+			vmw.VM.ToValue(tUser),
+			vmw.VM.ToValue(sRoom),
+		)
+		vmw.VM.ClearInterrupt()
+		tmr.Stop()
+
+		if err != nil {
+
+			// Wrap the error
+			finalErr := fmt.Errorf("%s(): %w", `onPlayerDowned`, err)
+
+			if _, ok := finalErr.(*goja.Exception); ok {
+				mudlog.Error("JSVM", "exception", finalErr)
+				return false, finalErr
+			} else if errors.Is(finalErr, errTimeout) {
+				mudlog.Error("JSVM", "interrupted", finalErr)
+				return false, finalErr
+			}
+
+			mudlog.Error("JSVM", "error", finalErr)
+			return false, finalErr
+		}
+
+		if boolVal, ok := res.Export().(bool); ok {
+			return boolVal, nil
+		}
+	}
+
+	return false, ErrEventNotFound
+}
+
 func TryMobScriptEvent(eventName string, mobInstanceId int, sourceId int, sourceType string, details map[string]any) (bool, error) {
 
 	sMob := GetActor(0, mobInstanceId)

@@ -17,7 +17,6 @@ function onCommand(cmd, rest, user, room) {
 
     teacherMob = getTeacher(room);
 
-    var extraDelay = 0;
     // Make sure they are only doing stuff that's allowed.
 
     if ( cmd == "south" && !canGoSouth ) {
@@ -34,17 +33,13 @@ function onCommand(cmd, rest, user, room) {
         
         teacherMob.Command("say Good job!", 1.0);
 
-        extraDelay = 1.0;
-
         if ( cmd == "equip stick" ) {
-            teacherMob.Command('say Check it out! If you type <ansi fg="command">status</ansi> you\'ll see the stick is equipped!', 2.0);
-            extraDelay = 2.0;
+            teacherMob.Command('say Check it out! If you type <ansi fg="command">status</ansi> you\'ll see the stick is equipped!', 1.0);
         }
 
         if ( cmd == "inventory" ) {
-            teacherMob.Command('say Hmm, it doesn\'t look like you\'re carrying much other than that sharp stick.', 2.0);
-            teacherMob.Command('say Remember, you can <ansi fg="command">look</ansi> at stuff you\'re carrying any time you want.', 3.0);
-            extraDelay = 3.0;
+            teacherMob.Command('say Hmm, it doesn\'t look like you\'re carrying much other than that sharp stick.', 1.0);
+            teacherMob.Command('say Remember, you can <ansi fg="command">look</ansi> at stuff you\'re carrying any time you want.', 1.0);
         }
 
         commandNow++;
@@ -70,14 +65,14 @@ function onCommand(cmd, rest, user, room) {
                 user.GiveItem(itm);
             }
             
-            teacherMob.Command('say Go ahead and equip that sharp stick you\'ve got. Type <ansi fg="command">equip stick</ansi>.', extraDelay+1.0);
+            teacherMob.Command('say Go ahead and equip that sharp stick you\'ve got. Type <ansi fg="command">equip stick</ansi>.', 1.0);
             break;
         case 1:
 
             getDummy(room);
 
-            teacherMob.Command('say You may have noticed the <ansi fg="mobname">training dummy</ansi> here.', extraDelay+1.0);
-            teacherMob.Command('say Go ahead and engage in combat by typing <ansi fg="command">attack dummy</ansi>.', extraDelay+2.0);
+            teacherMob.Command('say You may have noticed the <ansi fg="mobname">training dummy</ansi> here.', 1.0);
+            teacherMob.Command('say Go ahead and engage in combat by typing <ansi fg="command">attack dummy</ansi>. Don\'t worry, it can\'t hurt you.', 1.0);
             break;
         case 2:
             // teacherMob.Command('say Head <ansi fg="exit">west</ansi> to complete your training.');
@@ -110,10 +105,10 @@ function onEnter(user, room) {
         user.GiveItem(itm);
     }
 
-    teacherMob.Command('say Go ahead and equip that sharp stick you\'ve got. Type <ansi fg="command">equip stick</ansi>.', 2.0);
+    teacherMob.Command('say Go ahead and equip that sharp stick you\'ve got. Type <ansi fg="command">equip stick</ansi>.', 1.0);
+
+    return true;
 }
-
-
 
 function onExit(user , room) {
     // Destroy the guide (cleanup)
@@ -123,75 +118,32 @@ function onExit(user , room) {
     commandNow = 0;
 }
 
-
-
 function onLoad(room) {
     canGoSouth = false;
     commandNow = 0;
 }
 
-
 function getTeacher(room) {
-
-    var mobActor = null;
-
-    mobIds = room.GetMobs();
-    
-    for ( var i in mobIds ) {
-        mobActor = GetMob(mobIds[i]);
-        if ( mobActor.MobTypeId() == teacherMobId ) {
-            return mobActor;
-        }
-    }
-
-    mobActor = room.SpawnMob(teacherMobId);
+    var mobActor = room.GetMob(teacherMobId, true);
     mobActor.SetCharacterName(teacherName);
-
     return mobActor;
 }
 
 function destroyTeacher(room) {
-
-    var mobActor = null;
-
-    mobIds = room.GetMobs();
-    
-    for ( var i in mobIds ) {
-        mobActor = GetMob(mobIds[i]);
-        if ( mobActor.MobTypeId() == teacherMobId ) {
-            mobActor.Command(`suicide vanish`);
-        }
-    }
+    var mobActor = room.GetMob(teacherMobId);
+    if ( mobActor != null ) {
+        mobActor.Command(`suicide vanish`);
+    } 
 }
 
-
 function getDummy(room) {
-
-    var mobActor = null;
-
-    mobIds = room.GetMobs();
-    
-    for ( var i in mobIds ) {
-        mobActor = GetMob(mobIds[i]);
-        if ( mobActor.MobTypeId() == dummyMobId ) {
-            return mobActor;
-        }
-    }
-
-    return room.SpawnMob(dummyMobId);
+    return room.GetMob(dummyMobId, true);
 }
 
 function destroyDummy(room) {
-
-    var mobActor = null;
-
-    mobIds = room.GetMobs();
-    
-    for ( var i in mobIds ) {
-        mobActor = GetMob(mobIds[i]);
-        if ( mobActor.MobTypeId() == dummyMobId ) {
-            mobActor.Command(`suicide vanish`);
-        }
+    var mobActor = room.GetMob(dummyMobId);
+    if ( mobActor != null ) {
+        mobActor.Command(`suicide vanish`);
     }
 }
 

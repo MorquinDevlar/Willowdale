@@ -1580,153 +1580,138 @@ func (r *Room) FindContainerByName(containerNameSearch string) string {
 }
 
 func (r *Room) FindNoun(noun string) (foundNoun string, nounDescription string) {
-
 	if len(r.Nouns) == 0 {
-		return ``, ``
+		return "", ""
 	}
 
+	// Flatten the room nouns and create single-word aliases for multi-word nouns
 	roomNouns := map[string]string{}
-
 	for originalNoun, originalDesc := range r.Nouns {
 		roomNouns[originalNoun] = originalDesc
-
-		if strings.Contains(originalNoun, ` `) {
-			for _, n := range strings.Split(originalNoun, ` `) {
-
-				if _, ok := r.Nouns[n]; ok {
+		if strings.Contains(originalNoun, " ") {
+			for _, part := range strings.Split(originalNoun, " ") {
+				if _, exists := r.Nouns[part]; exists {
 					continue
 				}
-
-				if _, ok := roomNouns[n]; ok {
+				if _, exists := roomNouns[part]; exists {
 					continue
 				}
-
-				roomNouns[n] = `:` + originalNoun
-
+				roomNouns[part] = ":" + originalNoun
 			}
 		}
-
 	}
 
+	// Build candidate noun list
 	testNouns := util.SplitButRespectQuotes(noun)
-	ct := len(testNouns)
-	for i := 0; i < ct; i++ {
-
-		if splitCount := strings.Split(testNouns[i], ` `); len(splitCount) > 1 {
-
-			for _, n2 := range splitCount {
-
-				if len(n2) < 2 {
-					continue
-				}
-
-				testNouns = append(testNouns, n2)
+	for i := 0; i < len(testNouns); i++ {
+		if strings.Contains(testNouns[i], " ") {
+			for _, part := range strings.Split(testNouns[i], " ") {
+				testNouns = append(testNouns, strings.ToLower(strings.TrimSpace(part)))
 			}
-
 		}
 	}
-
-	// If it created more than one word, put the original back on as a full string to test
 	if len(testNouns) > 1 {
-		testNouns = append(testNouns, noun)
+		testNouns = append(testNouns, strings.ToLower(strings.TrimSpace(noun)))
 	}
 
-	for _, newNoun := range testNouns {
+	// Try each candidate: exact, singular/plural, alias-aware
+	for _, cand := range testNouns {
+		newNoun := strings.ToLower(strings.TrimSpace(cand))
 
+		// Direct match or single-level alias
 		if desc, ok := roomNouns[newNoun]; ok {
-			if desc[0:1] == `:` {
-				return desc[1:], roomNouns[desc[1:]]
-			}
-			return newNoun, desc
-		}
-
-		if len(newNoun) < 2 {
-			continue
-		}
-
-		// If ended in `s`, strip it and add a new word to the search list
-		if newNoun[len(newNoun)-1:] == `s` {
-
-			testNoun := newNoun[:len(newNoun)-1]
-			if desc, ok := roomNouns[testNoun]; ok {
-				if desc[0:1] == `:` {
-					return desc[1:], roomNouns[desc[1:]]
+			if strings.HasPrefix(desc, ":") {
+				target := desc[1:]
+				if targetDesc, ok2 := roomNouns[target]; ok2 && !strings.HasPrefix(targetDesc, ":") {
+					return target, targetDesc
 				}
-				return testNoun, desc
+				// alias->alias or missing target => ignore
+			} else {
+				return newNoun, desc
 			}
+		}
 
+		// Strip "es"
+		if strings.HasSuffix(newNoun, "es") {
+			tn := strings.TrimSuffix(newNoun, "es")
+			if desc, ok := roomNouns[tn]; ok {
+				if strings.HasPrefix(desc, ":") {
+					target := desc[1:]
+					if targetDesc, ok2 := roomNouns[target]; ok2 && !strings.HasPrefix(targetDesc, ":") {
+						return target, targetDesc
+					}
+				} else {
+					return tn, desc
+				}
+			}
 		} else {
-
-			testNoun := newNoun + `s`
-			if desc, ok := roomNouns[testNoun]; ok { // `s`` at end
-				if desc[0:1] == `:` {
-					return desc[1:], roomNouns[desc[1:]]
+			// Add "es"
+			tn := newNoun + "es"
+			if desc, ok := roomNouns[tn]; ok {
+				if strings.HasPrefix(desc, ":") {
+					target := desc[1:]
+					if targetDesc, ok2 := roomNouns[target]; ok2 && !strings.HasPrefix(targetDesc, ":") {
+						return target, targetDesc
+					}
+				} else {
+					return tn, desc
 				}
-				return testNoun, desc
 			}
-
 		}
 
-		// Switch ending of `y` to `ies`
-		if newNoun[len(newNoun)-1:] == `y` {
-
-			testNoun := newNoun[:len(newNoun)-1] + `ies`
-			if desc, ok := roomNouns[testNoun]; ok { // `ies` instead of `y` at end
-				if desc[0:1] == `:` {
-					return desc[1:], roomNouns[desc[1:]]
+		// "ies" -> "y"
+		if strings.HasSuffix(newNoun, "ies") {
+			tn := strings.TrimSuffix(newNoun, "ies") + "y"
+			if desc, ok := roomNouns[tn]; ok {
+				if strings.HasPrefix(desc, ":") {
+					target := desc[1:]
+					if targetDesc, ok2 := roomNouns[target]; ok2 && !strings.HasPrefix(targetDesc, ":") {
+						return target, targetDesc
+					}
+				} else {
+					return tn, desc
 				}
-				return testNoun, desc
 			}
-
 		}
-
-		if len(newNoun) < 3 {
-			continue
-		}
-
-		// Strip 'es' such as 'torches'
-		if newNoun[len(newNoun)-2:] == `es` {
-
-			testNoun := newNoun[:len(newNoun)-2]
-			if desc, ok := roomNouns[testNoun]; ok {
-				if desc[0:1] == `:` {
-					return desc[1:], roomNouns[desc[1:]]
-				}
-				return testNoun, desc
-			}
-
-		} else {
-
-			testNoun := newNoun + `es`
-			if desc, ok := roomNouns[testNoun]; ok { // `es` at end
-				if desc[0:1] == `:` {
-					return desc[1:], roomNouns[desc[1:]]
-				}
-				return testNoun, desc
-			}
-
-		}
-
-		if len(newNoun) < 4 {
-			continue
-		}
-
-		// Strip 'es' such as 'torches'
-		if noun[len(newNoun)-3:] == `ies` {
-
-			testNoun := newNoun[:len(newNoun)-3] + `y`
-			if desc, ok := roomNouns[testNoun]; ok { // `y` instead of `ies` at end
-				if desc[0:1] == `:` {
-					return desc[1:], roomNouns[desc[1:]]
-				}
-				return testNoun, desc
-			}
-
-		}
-
 	}
 
-	return ``, ``
+	// Multi-word noun match
+	for full, desc := range roomNouns {
+		if strings.Contains(full, " ") {
+			for _, part := range testNouns {
+				if strings.Contains(full, part) {
+					if strings.HasPrefix(desc, ":") {
+						target := desc[1:]
+						if td, ok := roomNouns[target]; ok && !strings.HasPrefix(td, ":") {
+							return target, td
+						}
+					} else {
+						return full, desc
+					}
+				}
+			}
+		}
+	}
+
+	// Single-word match for multi-word nouns
+	for full, desc := range roomNouns {
+		if !strings.Contains(full, " ") {
+			for _, part := range testNouns {
+				if part == full {
+					if strings.HasPrefix(desc, ":") {
+						target := desc[1:]
+						if td, ok := roomNouns[target]; ok && !strings.HasPrefix(td, ":") {
+							return target, td
+						}
+					} else {
+						return full, desc
+					}
+				}
+			}
+		}
+	}
+
+	return "", ""
 }
 
 func (r *Room) FindExitByName(exitNameSearch string) (exitName string, exitRoomId int) {

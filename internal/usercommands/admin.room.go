@@ -132,6 +132,8 @@ func Room(rest string, user *users.UserRecord, liveRoom *rooms.Room, flags event
 			user.SendText(`Noun Added:`)
 			user.SendText(fmt.Sprintf(`<ansi fg="noun">%s</ansi> - %s`, strings.Repeat(` `, 20-len(noun))+noun, description))
 
+			rooms.SaveRoomTemplate(*room)
+
 			return true, nil
 		}
 

@@ -45,6 +45,11 @@ func Portal(rest string, user *users.UserRecord, room *rooms.Room, flags events.
 		return true, errors.New(`you don't know how to portal`)
 	}
 
+	if !user.Character.TimerExpired(`jail`) {
+		user.SendText("Your portal is blocked here.")
+		return true, errors.New(`Your portal is blocked here`)
+	}
+
 	// Establish the default portal location
 	portalTargetRoomId := rooms.StartRoomIdAlias // Defaults to Start Room
 

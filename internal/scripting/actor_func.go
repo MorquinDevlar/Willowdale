@@ -380,6 +380,10 @@ func (a ScriptActor) MoveRoom(destRoomId int, leaveCharmedMobs ...bool) {
 					rmNext.AddMob(mobInstId)
 				}
 			}
+
+			if doLook, err := TryRoomScriptEvent(`onEnter`, a.userRecord.UserId, destRoomId); err != nil || doLook {
+				a.userRecord.CommandFlagged(`look`, events.CmdSecretly) // Do a secret look.
+			}
 		}
 
 	} else if a.mobRecord != nil {
@@ -396,6 +400,12 @@ func (a ScriptActor) MoveRoom(destRoomId int, leaveCharmedMobs ...bool) {
 
 func (a ScriptActor) UpdateItem(itm ScriptItem) {
 	a.userRecord.Character.UpdateItem(itm.originalItem, *itm.itemRecord)
+}
+
+func (a ScriptActor) AddEventLog(category string, message string) {
+	if a.userRecord != nil {
+		a.userRecord.EventLog.Add(category, message)
+	}
 }
 
 func (a ScriptActor) GiveItem(itm any) {
@@ -569,6 +579,13 @@ func (a ScriptActor) GetRaceKills(race string) int {
 	return raceKills[race]
 }
 
+func (a ScriptActor) SetHealth(amt int) {
+	a.characterRecord.Health = amt
+	if a.characterRecord.Health > a.characterRecord.HealthMax.Value {
+		a.characterRecord.Health = a.characterRecord.HealthMax.Value
+	}
+}
+
 func (a ScriptActor) GetHealth() int {
 	return a.characterRecord.Health
 }
@@ -666,6 +683,18 @@ func (a ScriptActor) GrantXP(xpAmt int, reason string) {
 		return
 	}
 	a.userRecord.GrantXP(xpAmt, reason)
+}
+
+func (a ScriptActor) TimerSet(name string, period string) {
+	a.characterRecord.TimerSet(name, period)
+}
+
+func (a ScriptActor) TimerExpired(name string) bool {
+	return a.characterRecord.TimerExpired(name)
+}
+
+func (a ScriptActor) TimerExists(name string) bool {
+	return a.characterRecord.TimerExists(name)
 }
 
 // ////////////////////////////////////////////////////////

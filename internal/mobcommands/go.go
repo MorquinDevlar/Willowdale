@@ -2,6 +2,7 @@ package mobcommands
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/GoMudEngine/GoMud/internal/buffs"
 	"github.com/GoMudEngine/GoMud/internal/configs"
@@ -15,6 +16,50 @@ func Go(rest string, mob *mobs.Mob, room *rooms.Room) (bool, error) {
 	// If has a buff that prevents combat, skip the player
 	if mob.Character.HasBuffFlag(buffs.NoMovement) {
 		return true, nil
+	}
+
+	// Special behavior allowed for mobs to travel to specific rooms, even if disconnected.
+	if forceRoomId, err := strconv.Atoi(rest); err == nil {
+
+		foundRoomExit := false
+		for exitName, exitInfo := range room.Exits {
+			if exitInfo.RoomId == forceRoomId {
+				rest = exitName
+				foundRoomExit = true
+			}
+		}
+
+		if !foundRoomExit {
+			c := configs.GetTextFormatsConfig()
+
+			if forceRoomId == room.RoomId {
+				return true, nil
+			}
+
+			destRoom := rooms.LoadRoom(forceRoomId)
+			if destRoom == nil {
+				return true, nil
+			}
+
+			room.RemoveMob(mob.InstanceId)
+			destRoom.AddMob(mob.InstanceId)
+
+			// Tell the old room they are leaving
+			room.SendText(
+				fmt.Sprintf(string(c.ExitRoomMessageWrapper),
+					fmt.Sprintf(`<ansi fg="mobname">%s</ansi> runs off suddenly.`, mob.Character.Name),
+				))
+
+			// Tell the new room they have arrived
+
+			destRoom.SendText(
+				fmt.Sprintf(string(c.EnterRoomMessageWrapper),
+					fmt.Sprintf(`<ansi fg="mobname">%s</ansi> enters from nearby.`, mob.Character.Name),
+				))
+
+			return true, nil
+
+		}
 	}
 
 	exitName := ``

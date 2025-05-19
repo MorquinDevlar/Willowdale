@@ -1,5 +1,7 @@
 package plugins
 
+import "net/http"
+
 type WebConfig struct {
 	navLinks map[string]string  // name=>path
 	pages    map[string]WebPage // path=>WebPage
@@ -9,7 +11,7 @@ type WebPage struct {
 	Name         string
 	Path         string
 	Filepath     string
-	DataFunction func() map[string]any
+	DataFunction func(r *http.Request) map[string]any
 }
 
 func newWebConfig() WebConfig {
@@ -23,7 +25,7 @@ func (w *WebConfig) NavLink(name string, path string) {
 	w.navLinks[name] = path
 }
 
-func (w *WebConfig) WebPage(name string, path string, file string, addToNav bool, dataFunc func() map[string]any) {
+func (w *WebConfig) WebPage(name string, path string, file string, addToNav bool, dataFunc func(r *http.Request) map[string]any) {
 	if addToNav {
 		w.NavLink(name, path)
 	}
@@ -33,4 +35,5 @@ func (w *WebConfig) WebPage(name string, path string, file string, addToNav bool
 		Filepath:     file,
 		DataFunction: dataFunc,
 	}
+
 }

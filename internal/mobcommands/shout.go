@@ -2,7 +2,6 @@ package mobcommands
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/GoMudEngine/GoMud/internal/buffs"
 	"github.com/GoMudEngine/GoMud/internal/mobs"
@@ -12,8 +11,6 @@ import (
 func Shout(rest string, mob *mobs.Mob, room *rooms.Room) (bool, error) {
 
 	isSneaking := mob.Character.HasBuffFlag(buffs.Hidden)
-
-	rest = strings.ToUpper(rest)
 
 	if isSneaking {
 		room.SendText(fmt.Sprintf(`someone shouts, "<ansi fg="saytext-mob">%s</ansi>"`, rest))

@@ -7,5 +7,6 @@ function onEnter(user, room) {
     if ( !user.HasQuest("6-return") ) {
         room.RepeatSpawnItem(10, 30);
     }
-    
+ 
+    return true;
 }

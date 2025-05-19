@@ -244,6 +244,13 @@ type LevelUp struct {
 
 func (l LevelUp) Type() string { return `LevelUp` }
 
+type PlayerDrop struct {
+	UserId int
+	RoomId int
+}
+
+func (l PlayerDrop) Type() string { return `PlayerDrop` }
+
 type PlayerDeath struct {
 	UserId        int
 	RoomId        int

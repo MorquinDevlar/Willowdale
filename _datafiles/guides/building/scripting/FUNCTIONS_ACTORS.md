@@ -5,7 +5,7 @@ ActorObjects are the basic object that represents Users and NPCs
 - [ActorObject](#actorobject)
   - [ActorNames(actors \[\]ActorObject) string ](#actornamesactors-actorobject-string-)
   - [GetUser(userId int) ActorObject ](#getuseruserid-int-actorobject-)
-  - [GetMob(mobInstanceId int) ActorObject ](#getmobmobinstanceid-int-actorobject-)
+  - [GetMob(mobInstanceId int \[,createIfMissing bool\]) ActorObject ](#getmobmobinstanceid-int-createifmissing-bool-actorobject-)
   - [ActorObject.UserId() int](#actorobjectuserid-int)
   - [ActorObject.InstanceId() int](#actorobjectinstanceid-int)
   - [ActorObject.MobTypeId() int](#actorobjectmobtypeid-int)
@@ -54,6 +54,7 @@ ActorObjects are the basic object that represents Users and NPCs
   - [ActorObject.GetMobKills(mobId int) int](#actorobjectgetmobkillsmobid-int-int)
   - [ActorObject.GetRaceKills(raceName string) int](#actorobjectgetracekillsracename-string-int)
   - [ActorObject.GetHealth() int](#actorobjectgethealth-int)
+  - [ActorObject.SetHealth(amt int)](#actorobjectsethealthamt-int)
   - [ActorObject.GetHealthMax() int](#actorobjectgethealthmax-int)
   - [ActorObject.GetHealthPct() float](#actorobjectgethealthpct-float)
   - [ActorObject.GetMana() int](#actorobjectgetmana-int)
@@ -84,6 +85,10 @@ ActorObjects are the basic object that represents Users and NPCs
   - [ActorObject.IsHome() bool](#actorobjectishome-bool)
   - [ActorObject.Pathing() bool](#actorobjectpathing-bool)
   - [ActorObject.PathingAtWaypoint() bool](#actorobjectpathingatwaypoint-bool)
+  - [ActorObject.TimerSet(name string, period string)](#actorobjecttimersetname-string-period-string)
+  - [ActorObject.TimerExpired(name string) bool](#actorobjecttimerexpiredname-string-bool)
+  - [ActorObject.TimerExists(name string) bool](#actorobjecttimerexistsname-string-bool)
+  - [ActorObject.AddEventLog(category string, message string)](#actorobjectaddeventlogcategory-string-message-string)
 
 
 
@@ -104,12 +109,13 @@ Retrieves a ActorObject for a given userId.
 | --- | --- |
 | userId | The target user id to get. |
 
-## [GetMob(mobInstanceId int) ActorObject ](/internal/scripting/actor_func.go)
+## [GetMob(mobInstanceId int [,createIfMissing bool]) ActorObject ](/internal/scripting/actor_func.go)
 Retrieves a ActorObject for a given mobInstanceId.
 
 |  Argument | Explanation |
 | --- | --- |
 | mobInstanceId | The target mobInstanceId to get. |
+| createIfMissing | If true and mob isn't found, the mob will be created and returned. |
 
 ## [ActorObject.UserId() int](/internal/scripting/actor_func.go)
 Returns the userId of the ActorObject.˚
@@ -435,6 +441,14 @@ Returns the number of times the actor has killed a certain race of mob
 ## [ActorObject.GetHealth() int](/internal/scripting/actor_func.go)
 Returns current actor health
 
+## [ActorObject.SetHealth(amt int)](/internal/scripting/actor_func.go)
+Sets actor health to a specific amount. If this exceeds their maximum health, sets to their maximum health.
+
+|  Argument | Explanation |
+| --- | --- |
+| amt | number of hitpoints to set them to |
+
+
 ## [ActorObject.GetHealthMax() int](/internal/scripting/actor_func.go)
 Returns current actor max health
 
@@ -565,3 +579,27 @@ returns the total specific statmod from worn items and buffs
 
 ## [ActorObject.PathingAtWaypoint() bool](/internal/scripting/actor_func.go)
 (mobs only) Returns true if actor is pathing and at a waypoint.
+
+
+## [ActorObject.TimerSet(name string, period string)](/internal/scripting/actor_func.go)
+Starts a new Round timer
+
+|  Argument | Explanation |
+| --- | --- |
+| name | A string identifier. Reusing names will overwrite previously assigned names. |
+| period | How long until the timer expires. `1 real hour`, `1 hour`, etc. |
+
+## [ActorObject.TimerExpired(name string) bool](/internal/scripting/actor_func.go)
+Returns true if the specified timer has expired or doesn't exist.
+
+## [ActorObject.TimerExists(name string) bool](/internal/scripting/actor_func.go)
+Returns true if the specified timer exists. 
+Set timers always exist until they are checked for expiration with `TimerExpired(name string)`
+
+## [ActorObject.AddEventLog(category string, message string)](/internal/scripting/actor_func.go)
+Adds a line to the users Event Log (`history`)
+
+|  Argument | Explanation |
+| --- | --- |
+| category | A short single word category  |
+| message | A single line describing the event |

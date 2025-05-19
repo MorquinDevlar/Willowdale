@@ -38,6 +38,20 @@ func GetChunkCount() int {
 	return result
 }
 
+// Looks for any ephemeralRoomId's that exits for the given roomId.
+// Returns a slice containing all found ephemeralIds
+func FindEphemeralRoomIds(roomId int) []int {
+
+	allEphemeralRoomIds := []int{}
+	for ephemeralRoomId, originalRoomId := range originalRoomIdLookups {
+		if originalRoomId == roomId {
+			allEphemeralRoomIds = append(allEphemeralRoomIds, ephemeralRoomId)
+		}
+	}
+
+	return allEphemeralRoomIds
+}
+
 // accepts RoomId's as arguments, and creates ephemeral copies of them, returning the new ID's of the copies.
 func CreateEphemeralRoomIds(roomIds ...int) (map[int]int, error) {
 

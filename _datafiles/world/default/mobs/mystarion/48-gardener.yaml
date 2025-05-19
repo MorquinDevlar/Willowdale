@@ -7,9 +7,8 @@ groups:
   - mystarion-npc
 activitylevel: 40
 idlecommands:
-  - say type `list` to see my wares
-  - say If you're looking to sell something, I may be interested... as long as it's
-    not too special or unique
+  - say type <ansi fg="command">list</ansi> to see my wares
+  - say If you're looking to sell something, I may be interested... as long as it's not too special or unique
   - emote is watching you
 combatcommands:
   - 'say How dare you attack the citizens of Mystarion! We do not forget!'

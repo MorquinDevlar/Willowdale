@@ -203,3 +203,13 @@ NOTE: You can safely start a new path with `mob.Command('pathto 123')` before re
 | mob | [ActorObject](FUNCTIONS_ACTORS.md) |
 | room | [RoomObject](FUNCTIONS_ROOMS.md) |
 | eventDetails.status | `start`, `waypoint`, or `end` |
+
+`onPlayerDowned()` is called when a player is downed (not killed), and this mob aggro'd on them.
+NOTE: If `true` is returned, will ensure this script only runs once for this type of MobId - for example, only one of the two guards in the room.
+
+|  Argument | Explanation |
+| --- | --- |
+| mob | [ActorObject](FUNCTIONS_ACTORS.md) |
+| user | [ActorObject](FUNCTIONS_ACTORS.md) |
+| room | [RoomObject](FUNCTIONS_ROOMS.md) |
+

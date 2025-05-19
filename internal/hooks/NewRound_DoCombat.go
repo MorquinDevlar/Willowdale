@@ -159,9 +159,9 @@ func handlePlayerCombat(evt events.NewRound) (affectedPlayerIds []int, affectedM
 
 				newRoom := rooms.LoadRoom(exitRoomId)
 
-				usercommands.Look(``, user, newRoom, events.CmdSecretly)
-
-				scripting.TryRoomScriptEvent(`onEnter`, user.UserId, exitRoomId)
+				if doLook, err := scripting.TryRoomScriptEvent(`onEnter`, user.UserId, exitRoomId); err != nil || doLook {
+					usercommands.Look(``, user, newRoom, events.CmdSecretly)
+				}
 
 			}
 
@@ -1075,18 +1075,15 @@ func handleAffected(affectedPlayerIds []int, affectedMobInstanceIds []int) {
 		if user := users.GetByUserId(userId); user != nil {
 
 			if user.Character.Health <= -10 {
+
 				user.Command(`suicide`) // suicide drops all money/items and transports to land of the dead.
+
 			} else if user.Character.Health < 1 {
 
-				user.SendText(`<ansi fg="red">you drop to the ground!</ansi>`)
-
-				if room := rooms.LoadRoom(user.Character.RoomId); room != nil {
-					room.SendText(
-						fmt.Sprintf(`<ansi fg="username">%s</ansi> <ansi fg="red">drops to the ground!</ansi>`, user.Character.Name),
-						user.UserId)
-				}
+				events.AddToQueue(events.PlayerDrop{UserId: user.UserId, RoomId: user.Character.RoomId})
 
 			}
+
 		}
 	}
 

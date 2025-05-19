@@ -29,6 +29,15 @@ See [Spell Scripting](SCRIPTING_SPELLS.md)
 
 [Messaging Functions](FUNCTIONS_MESSAGING.md) - Helper and info functions.
 
+# Time Periods
+
+Whenever you need to specific a "period" of time, it takes the following string format:
+
+- Should be in the format of: `{num} {unit}` or `{num} real {unit}`
+- Unit can be: `rounds`, `hours`, `days`, `weeks`, `months`, `years`
+- Default is in-game time, not real time. 
+- **To use real time, use the following format:** `{num} real {unit}` - Example: `1 real day`
+
 # Special symbols in user or mob commands:
 
 There are some special prefixes that can help target more specifically than just a name.

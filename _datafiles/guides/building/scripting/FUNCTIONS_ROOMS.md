@@ -13,8 +13,10 @@
   - [RoomObject.GetItems() \[\]ItemObject](#roomobjectgetitems-itemobject)
   - [RoomObject.DestroyItem(itm ScriptItem) ](#roomobjectdestroyitemitm-scriptitem-)
   - [RoomObject.SpawnItem(itemId int, inStash bool) \[\]ItemObject](#roomobjectspawnitemitemid-int-instash-bool-itemobject)
-  - [RoomObject.GetMobs() \[\]int](#roomobjectgetmobs-int)
-  - [RoomObject.GetPlayers() \[\]int](#roomobjectgetplayers-int)
+  - [RoomObject.GetMob(mobId int) Actor](#roomobjectgetmobmobid-int-actor)
+  - [RoomObject.GetMobs(\[mobId int\]) \[\]Actor](#roomobjectgetmobsmobid-int-actor)
+  - [RoomObject.GetPlayers() \[\]Actor](#roomobjectgetplayers-actor)
+  - [RoomObject.GetAllActors() \[\]Actor](#roomobjectgetallactors-actor)
   - [RoomObject.GetContainers() \[\]string](#roomobjectgetcontainers-string)
   - [RoomObject.GetExits() \[\]object](#roomobjectgetexits-object)
   - [GetMap(mapRoomId int, mapZoom, mapHeight int, mapWidth int, mapName string, showSecrets bool \[,mapMarker string, mapMarker string\]) string](#getmapmaproomid-int-mapzoom-mapheight-int-mapwidth-int-mapname-string-showsecrets-bool-mapmarker-string-mapmarker-string-string)
@@ -26,8 +28,11 @@
   - [RoomObject.HasMutator(mutName string) bool](#roomobjecthasmutatormutname-string-bool)
   - [RoomObject.AddMutator(mutName string)](#roomobjectaddmutatormutname-string)
   - [RoomObject.RemoveMutator(mutName string)](#roomobjectremovemutatormutname-string)
+  - [RoomObject.IsEphemeral() bool](#roomobjectisephemeral-bool)
+  - [RoomObject.RoomIdSource() int](#roomobjectroomidsource-int)
   - [RoomObject.RepeatSpawnItem(itemId int, roundInterval int \[, containerName\]](#roomobjectrepeatspawnitemitemid-int-roundinterval-int--containername)
   - [RoomObject.SetLocked(exitName string, lockIt bool)](#roomobjectsetlockedexitname-string-lockit-bool)
+  - [RoomObject.IsLocked(exitName string) bool](#roomobjectislockedexitname-string-bool)
 
 ## [CreateInstancesFromRoomIds(RoomIds [int, int...]) Object ](/internal/scripting/room_func.go)
 Returns an Object with key/value pairs of `ProvidedRoomId`=>`NewRoomId`
@@ -113,11 +118,26 @@ Spawns an item in the room.
 | itemId | ItemId to spawn. |
 | inStash | If true, spawns stashed instead of visible. |
 
-## [RoomObject.GetMobs() []int](/internal/scripting/room_func.go)
-Returns an array of `mobInstanceIds` in the room.
 
-## [RoomObject.GetPlayers() []int](/internal/scripting/room_func.go)
-Returns an array of `userIds` in the room.
+## [RoomObject.GetMob(mobId int) Actor](/internal/scripting/room_func.go)
+Returns the first mob that matches the provided MobId type (Note: NOT MOB INSTANCE ID!)
+
+|  Argument | Explanation |
+| --- | --- |
+| mobId | MobId to match. |
+
+## [RoomObject.GetMobs([mobId int]) []Actor](/internal/scripting/room_func.go)
+Returns an array of mob `Actor`s in the room.
+
+|  Argument | Explanation |
+| --- | --- |
+| mobId (optional) | Only get mobs of the provided MobId type. (Note: NOT MOB INSTANCE ID!) |
+
+## [RoomObject.GetPlayers() []Actor](/internal/scripting/room_func.go)
+Returns an array of player `Actor`s in the room.
+
+## [RoomObject.GetAllActors() []Actor](/internal/scripting/room_func.go)
+Returns an array of all `Actor`s in the room.
 
 ## [RoomObject.GetContainers() []string](/internal/scripting/room_func.go)
 Gets a list of container names in the room.
@@ -227,6 +247,18 @@ _Note: This only expires it. It may be a mutator that respawns, in which case th
 | --- | --- |
 | mutName | the MutatorId of the mutator. |
 
+## [RoomObject.IsEphemeral() bool](/internal/scripting/room_func.go)
+Returns true if the room is an Ephemeral Copy of a room.
+
+_Note: This only expires it. It may be a mutator that respawns, in which case this doens't really completely remove it._
+
+|  Argument | Explanation |
+| --- | --- |
+| mutName | the MutatorId of the mutator. |
+
+## [RoomObject.RoomIdSource() int](/internal/scripting/room_func.go)
+Returns the source RoomId if this room is an ephemeral copy, otherwise just the normal RoomId
+
 
 ## [RoomObject.RepeatSpawnItem(itemId int, roundInterval int [, containerName]](/internal/scripting/room_func.go)
 Removes a temporary exit
@@ -247,3 +279,5 @@ Sets an exit to locked or not (If it has a lock)
 | exitName | The exitname to lock/unlock |
 | lockIt | if true, sets it to locked. Otherwise, unlocks it. |
 
+## [RoomObject.IsLocked(exitName string) bool](/internal/scripting/room_func.go)
+Returns true if exit is locked, false if unlocked or has no lock.

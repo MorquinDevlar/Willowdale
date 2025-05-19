@@ -217,9 +217,9 @@ func Start(rest string, user *users.UserRecord, room *rooms.Room, flags events.E
 					user.UserId,
 				)
 
-				Look(``, user, destRoom, events.CmdSecretly) // Do a secret look.
-
-				scripting.TryRoomScriptEvent(`onEnter`, user.UserId, destRoom.RoomId)
+				if doLook, err := scripting.TryRoomScriptEvent(`onEnter`, user.UserId, destRoom.RoomId); err != nil || doLook {
+					Look(``, user, destRoom, events.CmdSecretly) // Do a secret look.
+				}
 
 				room.PlaySound(`room-exit`, `movement`, user.UserId)
 				destRoom.PlaySound(`room-enter`, `movement`, user.UserId)
@@ -251,11 +251,16 @@ func Start(rest string, user *users.UserRecord, room *rooms.Room, flags events.E
 	}
 
 	ephemeralStartRoomId := createdRoomIds[startRoom]
-	scripting.TryRoomScriptEvent(`onEnter`, user.UserId, ephemeralStartRoomId)
 
 	user.SendText(fmt.Sprintf(`<ansi fg="magenta">Suddenly, a vortex appears before you, drawing you in before you have any chance to react!</ansi>%s`, term.CRLFStr))
 
 	rooms.MoveToRoom(user.UserId, ephemeralStartRoomId)
+
+	if doLook, err := scripting.TryRoomScriptEvent(`onEnter`, user.UserId, ephemeralStartRoomId); err != nil || doLook {
+		if lookRoom := rooms.LoadRoom(ephemeralStartRoomId); lookRoom != nil {
+			Look(``, user, lookRoom, events.CmdSecretly)
+		}
+	}
 
 	return true, nil
 }

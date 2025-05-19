@@ -4,6 +4,8 @@ itemdropchance: 2
 hostile: false
 groups: 
   - frostfang-npc
+combatcommands:
+  - 'callforhelp 7:guard:calls for the guards.'
 idlecommands:
   - 'say You can <ansi fg="command">sleep</ansi> here for a bit here to refresh.'
   - 'say If you''re hungry check the <ansi fg="command">list</ansi> of food for sale.'

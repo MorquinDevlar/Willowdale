@@ -430,9 +430,6 @@ func LoadAliases(f ...fileloader.ReadableGroupFS) {
 		return
 	}
 
-	// Set to 256 color mode
-	ansitags.SetColorMode(ansitags.Color256)
-
 	ansiLock.Lock()
 	defer ansiLock.Unlock()
 
@@ -453,9 +450,12 @@ func LoadAliases(f ...fileloader.ReadableGroupFS) {
 			}
 
 			for aliasGroup, aliases := range data {
+				if aliasGroup != `colors` && aliasGroup != `color256` {
+					continue
+				}
 				for alias, valStr := range aliases {
 					if valInt, err := strconv.Atoi(valStr); err == nil {
-						ansitags.SetAlias(alias, valInt, aliasGroup)
+						ansitags.SetAlias(alias, valInt)
 					}
 				}
 			}

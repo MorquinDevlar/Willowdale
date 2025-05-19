@@ -4,6 +4,8 @@ itemdropchance: 2
 hostile: false
 groups: 
   - frostfang-npc
+combatcommands:
+  - 'callforhelp 7:guard:calls for the guards.'
 activitylevel: 30
 maxwander: 5
 idlecommands:

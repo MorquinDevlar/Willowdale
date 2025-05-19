@@ -1,25 +1,26 @@
 
 function onCommand_vault(rest, user, room) {
 
-    guard_present = false;
+    var presentMob = null;
 
-    mobs = room.GetMobs();
-    for (i = 0; i < mobs.length; i++) {
-        if ( (mob = GetMob(mobs[i])) == null ) {
-            continue;
-        }
+    var roomMobs = room.GetMobs();
+    for (i = 0; i < roomMobs.length; i++) {
+        var mob = roomMobs[i];
         mobName = mob.GetCharacterName(false);
         if ( mobName.indexOf("guard") !== -1 ) {
-            guard_present = true;
+            presentMob = mob;
             break;
         }
     }
 
-    hidden = user.HasBuffFlag("hidden");
-
-    if (guard_present && !hidden) {
-        SendUserMessage(user.UserId(), "A guard blocks you from entering the vault.");
-        SendRoomMessage(room.RoomId(), "A guard blocks "+user.GetCharacterName(true)+" from entering the vault.", user.UserId());
+    if ( user.HasBuffFlag("hidden") ) {
+        return false;
+    }
+    
+    if ( presentMob != null ) {
+        SendUserMessage(user.UserId(), presentMob.GetCharacterName(true) + " blocks you from entering the vault.");
+        SendRoomMessage(room.RoomId(), presentMob.GetCharacterName(true) + " blocks " + user.GetCharacterName(true) + " from entering the vault.", user.UserId());
+        presentMob.Command(`sayto ` + user.ShorthandId() + ` not on my watch, pal.`, 1.0);
         return true;
     }
 

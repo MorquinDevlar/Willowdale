@@ -75,8 +75,10 @@ type Mob struct {
 	QuestFlags      []string `yaml:"questflags,omitempty,flow"` // What quest flags are set on this mob?
 	BuffIds         []int    `yaml:"buffids,omitempty"`         // Buff Id's this mob always has upon spawn
 	tempDataStore   map[string]any
-	conversationId  int       // Identifier of conversation currently involved in.
-	Path            PathQueue `yaml:"-"` // a pre-calculated path the mob is following.
+	conversationId  int              // Identifier of conversation currently involved in.
+	Path            PathQueue        `yaml:"-"` // a pre-calculated path the mob is following.
+	lastCommandTurn uint64           // The last turn a command was scheduled for
+	playersAttacked map[int]struct{} // all players this mob has attacked at some point
 }
 
 func MobInstanceExists(instanceId int) bool {
@@ -101,6 +103,7 @@ func GetAllMobNames() []string {
 func TrackRecentDeath(instanceId int) {
 	recentlyDied[instanceId] = int(util.GetRoundCount())
 }
+
 func RecentlyDied(instanceId int) bool {
 
 	if len(recentlyDied) > 30 {
@@ -257,6 +260,21 @@ func (m *Mob) AddBuff(buffId int, source string) {
 
 }
 
+func (m *Mob) PlayerAttacked(userId int) {
+	if m.playersAttacked == nil {
+		m.playersAttacked = map[int]struct{}{}
+	}
+	m.playersAttacked[userId] = struct{}{}
+}
+
+func (m *Mob) HasAttackedPlayer(userId int) bool {
+	if m.playersAttacked == nil {
+		return false
+	}
+	_, ok := m.playersAttacked[userId]
+	return ok
+}
+
 func (m *Mob) InConversation() bool {
 	return m.conversationId > 0
 }
@@ -324,17 +342,32 @@ func (m *Mob) Sleep(seconds int) {
 func (m *Mob) Command(inputTxt string, waitSeconds ...float64) {
 
 	readyTurn := util.GetTurnCount()
-	if len(waitSeconds) > 0 {
-		readyTurn += uint64(float64(configs.GetTimingConfig().SecondsToTurns(1)) * waitSeconds[0])
+	turnDelay := uint64(0)
+
+	// m.lastCommandTurn is used so that subsequent calls to Command()
+	// are scheduled from this period forward.
+	// If it's been long enough that the current turn has surpassed the lastCommandTurn, we failover to that.
+	if readyTurn > m.lastCommandTurn {
+		m.lastCommandTurn = readyTurn
+	} else {
+		readyTurn = m.lastCommandTurn
 	}
 
-	for _, cmd := range strings.Split(inputTxt, `;`) {
+	if len(waitSeconds) > 0 {
+		turnDelay = uint64(float64(configs.GetTimingConfig().SecondsToTurns(1)) * waitSeconds[0])
+	}
+
+	for i, cmd := range strings.Split(inputTxt, `;`) {
+
+		// Update lastCommandTurn to whenever this command is scheduled for
+		m.lastCommandTurn = readyTurn + turnDelay + uint64(i)
+
 		events.AddToQueue(events.Input{
 			MobInstanceId: m.InstanceId,
 			InputText:     cmd,
-			ReadyTurn:     readyTurn,
+			ReadyTurn:     m.lastCommandTurn,
 		})
-		readyTurn++
+
 	}
 
 }
@@ -538,6 +571,14 @@ func (m *Mob) GetAngryCommand() string {
 
 func (m *Mob) GetIdleCommand() string {
 
+	// Always a 1 in 100 chance it will do nothing for an idle.
+	// This is to prevent requiring Admins to assign an empy idlecommand to mob definitions
+	// while still allowing "no idle command found" behavior to run.
+	// Empty idle commands can still be defined in mobs, however.
+	if util.Rand(100) == 0 {
+		return ``
+	}
+
 	// First check if the mob has a specific action
 	if len(m.IdleCommands) > 0 {
 		return m.IdleCommands[util.Rand(len(m.IdleCommands))]
@@ -546,7 +587,7 @@ func (m *Mob) GetIdleCommand() string {
 	return ``
 }
 
-func (r *Mob) IsAlly(m *Mob) bool {
+func (r *Mob) ConsidersAnAlly(m *Mob) bool {
 
 	if m.MobId == r.MobId {
 		return true // Auto ally with own kind
@@ -557,10 +598,12 @@ func (r *Mob) IsAlly(m *Mob) bool {
 	}
 
 	// If they both belong to factions/groups, check for matches
-	if len(m.Groups) > 0 && len(r.Groups) > 0 {
+	// Could conver tthis to a look up map.
+	// Only a couple entries likely, so maybe not worth it.
+	if len(r.Groups) > 0 {
 		// Look for a group match
-		for _, testGroup := range m.Groups {
-			for _, targetGroup := range r.Groups {
+		for _, targetGroup := range r.Groups {
+			for _, testGroup := range m.Groups {
 				if testGroup == targetGroup {
 					return true
 				}
@@ -584,6 +627,7 @@ func (r *Mob) Validate() error {
 	}
 
 	r.Character.Validate()
+
 	return nil
 }
 

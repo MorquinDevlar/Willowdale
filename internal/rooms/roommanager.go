@@ -261,11 +261,17 @@ func MoveToRoom(userId int, toRoomId int, isSpawn ...bool) error {
 	user := users.GetByUserId(userId)
 
 	currentRoom := LoadRoom(user.Character.RoomId)
-	if currentRoom == nil {
-		return fmt.Errorf(`room %d not found`, user.Character.RoomId)
-	}
 
 	cfg := configs.GetSpecialRoomsConfig()
+
+	// If they are being moved to the death recovery room
+	// Put them in their own instance of it.
+	deathRecoveryRoomId := int(cfg.DeathRecoveryRoom)
+	if toRoomId == deathRecoveryRoomId {
+		if newRooms, err := CreateEphemeralRoomIds(deathRecoveryRoomId); err == nil {
+			toRoomId = newRooms[deathRecoveryRoomId]
+		}
+	}
 
 	if toRoomId == StartRoomIdAlias {
 
@@ -297,10 +303,12 @@ func MoveToRoom(userId int, toRoomId int, isSpawn ...bool) error {
 		newRoom.Prepare(true)
 	}
 
-	currentRoom.MarkVisited(userId, VisitorUser, 1)
-
-	if len, _ := currentRoom.RemovePlayer(userId); len < 1 {
-		delete(roomManager.roomsWithUsers, currentRoom.RoomId)
+	fromRoomId := user.Character.RoomId
+	if currentRoom != nil {
+		currentRoom.MarkVisited(userId, VisitorUser, 1)
+		if len, _ := currentRoom.RemovePlayer(userId); len < 1 {
+			delete(roomManager.roomsWithUsers, currentRoom.RoomId)
+		}
 	}
 
 	newRoom.MarkVisited(userId, VisitorUser)
@@ -334,7 +342,7 @@ func MoveToRoom(userId int, toRoomId int, isSpawn ...bool) error {
 
 	events.AddToQueue(events.RoomChange{
 		UserId:     userId,
-		FromRoomId: currentRoom.RoomId,
+		FromRoomId: fromRoomId,
 		ToRoomId:   newRoom.RoomId,
 		Unseen:     user.Character.HasBuffFlag(buffs.Hidden),
 	})
@@ -688,10 +696,10 @@ func CreateZone(zoneName string) (roomId int, err error) {
 		return 0, err
 	}
 
+	addRoomToMemory(newRoom)
+
 	// save to the flat file
 	SaveRoomTemplate(*newRoom)
-
-	addRoomToMemory(newRoom)
 
 	// write room to the folder under the new ID
 	return newRoom.RoomId, nil

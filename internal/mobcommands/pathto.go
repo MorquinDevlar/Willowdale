@@ -1,6 +1,7 @@
 package mobcommands
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
@@ -16,6 +17,10 @@ func Pathto(rest string, mob *mobs.Mob, room *rooms.Room) (bool, error) {
 	if rest == `home` {
 		cantGoHome := mob.GetTempData(`home-impossible`)
 		if cantGoHome != nil && cantGoHome.(bool) == true {
+			// If can't go home, slowly lose health (10%)
+			// This helps to clean up mobs that get stuck in a weird location, which can
+			// happen for any number of reasons, like players dragging them through portals
+			mob.Character.Health -= int(math.Ceil(float64(mob.Character.HealthMax.Value) / 10))
 			return true, nil
 		}
 	}

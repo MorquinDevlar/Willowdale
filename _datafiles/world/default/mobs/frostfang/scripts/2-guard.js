@@ -65,3 +65,17 @@ function onPath(mob, room, eventDetails) {
     }
 
 }
+
+
+function onPlayerDowned(mob, user, room) {
+    
+    user.SendText(mob.GetCharacterName(true) + " approaches you from behind, striking you with the pommel of their sword.");
+    user.SendText("The last thing you remember hearing is the jingling of chains as you black out.");
+
+    room.SendText(mob.GetCharacterName(true) + " approaches " + user.GetCharacterName(true) + " from behind, striking them with the pommel of their sword.", user.UserId());
+    room.SendText(mob.GetCharacterName(true) + " places " + user.GetCharacterName(true) + " in chains, and sends them away with a deputy to put them in jail.", user.UserId());
+
+    user.MoveRoom(1003);
+
+    return true;
+}

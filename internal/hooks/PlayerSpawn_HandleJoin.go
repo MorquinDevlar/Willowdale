@@ -7,6 +7,7 @@ import (
 	"github.com/GoMudEngine/GoMud/internal/events"
 	"github.com/GoMudEngine/GoMud/internal/mudlog"
 	"github.com/GoMudEngine/GoMud/internal/rooms"
+	"github.com/GoMudEngine/GoMud/internal/scripting"
 	"github.com/GoMudEngine/GoMud/internal/users"
 )
 
@@ -37,12 +38,11 @@ func HandleJoin(e events.Event) events.ListenerReturn {
 
 		mudlog.Error("EnterWorld", "error", fmt.Sprintf(`room %d not found`, user.Character.RoomId))
 
-		user.Character.RoomId = 1
-		user.Character.Zone = "Frostfang"
-		room = rooms.LoadRoom(user.Character.RoomId)
-		if room == nil {
-			mudlog.Error("EnterWorld", "error", fmt.Sprintf(`room %d not found`, user.Character.RoomId))
+		if err := rooms.MoveToRoom(user.UserId, 0); err != nil {
+			mudlog.Error("EnterWorld", "msg", "could not move to room 0", "error", err)
 		}
+
+		room = rooms.LoadRoom(user.Character.RoomId)
 	}
 
 	// TODO HERE
@@ -59,6 +59,12 @@ func HandleJoin(e events.Event) events.ListenerReturn {
 
 		}
 
+	}
+
+	if room != nil {
+		if doLook, err := scripting.TryRoomScriptEvent(`onEnter`, user.UserId, user.Character.RoomId); err != nil || doLook {
+			user.CommandFlagged(`look`, events.CmdSecretly) // Do a secret look.
+		}
 	}
 
 	return events.Continue

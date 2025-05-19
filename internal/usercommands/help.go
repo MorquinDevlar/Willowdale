@@ -79,50 +79,12 @@ func Help(rest string, user *users.UserRecord, room *rooms.Room, flags events.Ev
 		}
 	} else {
 
-		helpName := args[0]
-		helpRest := ``
-
-		args := args[1:]
-		if len(args) > 0 {
-			helpRest = strings.Join(args, ` `)
-		}
-
-		// replace any non alpha/numeric characters in "rest"
-		if fullSearchAlias := keywords.TryHelpAlias(rest); fullSearchAlias != rest {
-			helpName = fullSearchAlias
-		} else {
-			helpName = regexp.MustCompile(`[^a-zA-Z0-9\\-]+`).ReplaceAllString(helpName, ``)
-			helpName = keywords.TryHelpAlias(helpName)
-		}
-
-		var helpVars any = nil
-
-		if helpName == `emote` {
-			helpVars = emoteAliases
-		}
-
-		if helpName == `races` {
-			helpVars = getRaceOptions(helpRest)
-		}
-
-		if helpName == `spell` {
-			sData := spells.GetSpell(helpRest)
-			if sData == nil {
-				sData = spells.FindSpellByName(helpRest)
-			}
-
-			if sData == nil {
-				helpName = `spells`
-			} else {
-				helpVars = *sData
-			}
-		}
-
-		helpTxt, err = templates.Process("help/"+helpName, helpVars, user.UserId)
+		helpTxt, err = GetHelpContents(rest)
 		if err != nil {
-			user.SendText(fmt.Sprintf(`No help found for "%s"`, helpName))
+			user.SendText(fmt.Sprintf(`No help found for "%s"`, rest))
 			return true, err
 		}
+
 	}
 
 	user.SendText(helpTxt)
@@ -168,4 +130,50 @@ func getRaceOptions(raceRequest string) []races.Race {
 	}
 
 	return raceOptions
+}
+
+func GetHelpContents(input string) (string, error) {
+
+	args := util.SplitButRespectQuotes(input)
+
+	helpName := args[0]
+	helpRest := ``
+
+	args = args[1:]
+	if len(args) > 0 {
+		helpRest = strings.Join(args, ` `)
+	}
+
+	// replace any non alpha/numeric characters in "rest"
+	if fullSearchAlias := keywords.TryHelpAlias(input); fullSearchAlias != input {
+		helpName = fullSearchAlias
+	} else {
+		helpName = regexp.MustCompile(`[^a-zA-Z0-9\\-]+`).ReplaceAllString(helpName, ``)
+		helpName = keywords.TryHelpAlias(helpName)
+	}
+
+	var helpVars any = nil
+
+	if helpName == `emote` {
+		helpVars = emoteAliases
+	}
+
+	if helpName == `races` {
+		helpVars = getRaceOptions(helpRest)
+	}
+
+	if helpName == `spell` {
+		sData := spells.GetSpell(helpRest)
+		if sData == nil {
+			sData = spells.FindSpellByName(helpRest)
+		}
+
+		if sData == nil {
+			helpName = `spells`
+		} else {
+			helpVars = *sData
+		}
+	}
+
+	return templates.Process("help/"+helpName, helpVars, 0)
 }

@@ -5,6 +5,8 @@ hostile: false
 maxwander: 0
 groups: 
   - frostfang-npc
+combatcommands:
+  - 'callforhelp 7:guard:calls for the guards.'
 activitylevel: 20
 character:
   name: elara

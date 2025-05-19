@@ -21,8 +21,6 @@ func Message_SendMessage(e events.Event) events.ListenerReturn {
 		return events.Continue
 	}
 
-	//mudlog.Debug("Message{}", "userId", message.UserId, "roomId", message.RoomId, "length", len(message.Text), "IsCommunication", message.IsCommunication)
-
 	if message.UserId > 0 {
 
 		if user := users.GetByUserId(message.UserId); user != nil {

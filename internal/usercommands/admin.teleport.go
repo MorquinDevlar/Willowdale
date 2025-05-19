@@ -3,6 +3,7 @@ package usercommands
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/GoMudEngine/GoMud/internal/events"
 	"github.com/GoMudEngine/GoMud/internal/mapper"
@@ -13,6 +14,7 @@ import (
 	"github.com/GoMudEngine/GoMud/internal/scripting"
 	"github.com/GoMudEngine/GoMud/internal/templates"
 	"github.com/GoMudEngine/GoMud/internal/users"
+	"github.com/GoMudEngine/GoMud/internal/util"
 )
 
 /*
@@ -30,6 +32,17 @@ func Teleport(rest string, user *users.UserRecord, room *rooms.Room, flags event
 		user.SendText(infoOutput)
 
 		return true, nil
+	}
+
+	targetUser := user
+
+	args := util.SplitButRespectQuotes(rest)
+	if len(args) > 1 {
+
+		if searchUser := users.GetByCharacterName(args[0]); searchUser != nil {
+			rest = strings.Join(args[1:], ` `)
+			targetUser = searchUser
+		}
 	}
 
 	gotoRoomId, numError := strconv.Atoi(rest)
@@ -77,9 +90,9 @@ func Teleport(rest string, user *users.UserRecord, room *rooms.Room, flags event
 
 	if gotoRoomId != 0 || rest == `0` {
 
-		previousRoomId := user.Character.RoomId
+		previousRoomId := targetUser.Character.RoomId
 
-		if err := rooms.MoveToRoom(user.UserId, gotoRoomId); err != nil {
+		if err := rooms.MoveToRoom(targetUser.UserId, gotoRoomId); err != nil {
 			user.SendText(err.Error())
 
 		} else {
@@ -90,14 +103,14 @@ func Teleport(rest string, user *users.UserRecord, room *rooms.Room, flags event
 
 			gotoRoom := rooms.LoadRoom(gotoRoomId)
 			gotoRoom.SendText(
-				fmt.Sprintf(`<ansi fg="username">%s</ansi> appears in a flash of light!`, user.Character.Name),
-				user.UserId,
+				fmt.Sprintf(`<ansi fg="username">%s</ansi> appears in a flash of light!`, targetUser.Character.Name),
+				targetUser.UserId,
 			)
 
-			if party := parties.Get(user.UserId); party != nil {
+			if party := parties.Get(targetUser.UserId); party != nil {
 
 				// Party leaders can move the whole party.
-				if party.LeaderUserId == user.UserId {
+				if party.LeaderUserId == targetUser.UserId {
 
 					newRoom := rooms.LoadRoom(gotoRoomId)
 					for _, uid := range room.GetPlayers() {
@@ -133,9 +146,9 @@ func Teleport(rest string, user *users.UserRecord, room *rooms.Room, flags event
 
 			}
 
-			Look(``, user, gotoRoom, flags)
-
-			scripting.TryRoomScriptEvent(`onEnter`, user.UserId, gotoRoomId)
+			if doLook, err := scripting.TryRoomScriptEvent(`onEnter`, targetUser.UserId, gotoRoomId); err != nil || doLook {
+				Look(``, targetUser, gotoRoom, flags)
+			}
 
 		}
 	} else {
