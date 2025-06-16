@@ -702,7 +702,16 @@ func (g *GMCPMudletModule) discordCommand(rest string, user *users.UserRecord, r
 	// Process arguments
 	args := strings.Fields(rest)
 	if len(args) == 0 {
-		user.SendText("\nUsage: discord area on|off|party on|off|name on|off|level on|off|info on|off|status on|off\n")
+		user.SendText("\n")
+		user.SendText("Usage: discord <command> <setting>\n")
+		user.SendText("Commands:")
+		user.SendText("  area          on|off")
+		user.SendText("  party         on|off")
+		user.SendText("  name          on|off")
+		user.SendText("  level         on|off")
+		user.SendText("  info          on|off")
+		user.SendText("  status        on|off")
+		user.SendText("\n")
 		return true, nil
 	}
 
@@ -775,10 +784,28 @@ func (g *GMCPMudletModule) discordCommand(rest string, user *users.UserRecord, r
 			}
 
 		default:
-			user.SendText("\nUsage: discord area on|off|party on|off|name on|off|level on|off|info on|off|status on|off\n")
+			user.SendText("\n")
+			user.SendText("Usage: discord <command> <setting>\n")
+			user.SendText("Commands:")
+			user.SendText("  area          on|off")
+			user.SendText("  party         on|off")
+			user.SendText("  name          on|off")
+			user.SendText("  level         on|off")
+			user.SendText("  info          on|off")
+			user.SendText("  status        on|off")
+			user.SendText("\n")
 		}
 	} else {
-		user.SendText("\nUsage: discord area on|off|party on|off|name on|off|level on|off|info on|off|status on|off\n")
+		user.SendText("\n")
+		user.SendText("Usage: discord <command> <setting>\n")
+		user.SendText("Commands:")
+		user.SendText("  area          on|off")
+		user.SendText("  party         on|off")
+		user.SendText("  name          on|off")
+		user.SendText("  level         on|off")
+		user.SendText("  info          on|off")
+		user.SendText("  status        on|off")
+		user.SendText("\n")
 	}
 
 	return true, nil
