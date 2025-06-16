@@ -15,6 +15,7 @@ import (
 	"github.com/GoMudEngine/GoMud/internal/exit"
 	"github.com/GoMudEngine/GoMud/internal/gametime"
 	"github.com/GoMudEngine/GoMud/internal/items"
+	"github.com/GoMudEngine/GoMud/internal/keywords"
 	"github.com/GoMudEngine/GoMud/internal/mobs"
 	"github.com/GoMudEngine/GoMud/internal/mutators"
 	"github.com/GoMudEngine/GoMud/internal/users"
@@ -30,18 +31,6 @@ var (
 		//"•": "*",
 	}
 
-	standardDirectionAbbrevs = map[string]string{
-		`n`:  `north`,
-		`s`:  `south`,
-		`e`:  `east`,
-		`w`:  `west`,
-		`ne`: `northeast`,
-		`nw`: `northwest`,
-		`se`: `southeast`,
-		`sw`: `southwest`,
-		`u`:  `up`,
-		`d`:  `down`,
-	}
 )
 
 type FindFlag uint16
@@ -1729,10 +1718,10 @@ func (r *Room) FindNoun(noun string) (foundNoun string, nounDescription string) 
 
 func (r *Room) FindExitByName(exitNameSearch string) (exitName string, exitRoomId int) {
 
-	// Check for standard direction abbreviation first
-	searchLower := strings.ToLower(exitNameSearch)
-	if fullDirection, isStandardAbbrev := standardDirectionAbbrevs[searchLower]; isStandardAbbrev {
-		// Check if this exact direction exists in the room
+	// Check for direction aliases from keywords.yaml first
+	fullDirection := keywords.TryDirectionAlias(exitNameSearch)
+	if fullDirection != exitNameSearch {
+		// A direction alias was found, check if this exact direction exists
 		if exitInfo, ok := r.Exits[fullDirection]; ok {
 			return fullDirection, exitInfo.RoomId
 		}
@@ -1747,7 +1736,7 @@ func (r *Room) FindExitByName(exitNameSearch string) (exitName string, exitRoomI
 				return fullDirection, exitInfo.RoomId
 			}
 		}
-		// Standard abbreviation used but exit doesn't exist
+		// Direction alias used but exit doesn't exist
 		return ``, 0
 	}
 
@@ -1770,22 +1759,10 @@ func (r *Room) FindExitByName(exitNameSearch string) (exitName string, exitRoomI
 		}
 	}
 
-	// Use fuzzy matching for non-standard exits
+	// Use fuzzy matching for all exits
 	exactMatch, closeMatch := util.FindMatchIn(exitNameSearch, exitNames...)
 
 	if len(exactMatch) == 0 {
-
-		exactMatchesRequired := []string{
-			`southeast`, `southwest`,
-			`northeast`, `northwest`,
-		}
-		// Do not allow prefix matches on southwest etc
-		for _, requiredCloseMatchTerm := range exactMatchesRequired {
-			if requiredCloseMatchTerm == closeMatch {
-				return "", 0
-			}
-		}
-
 		portalStr := `portal`
 		if strings.HasPrefix(closeMatch, exitNameSearch) {
 			exactMatch = closeMatch
