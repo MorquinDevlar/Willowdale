@@ -29,6 +29,19 @@ var (
 		"*": defaultMapSymbol,
 		//"•": "*",
 	}
+
+	standardDirectionAbbrevs = map[string]string{
+		`n`:  `north`,
+		`s`:  `south`,
+		`e`:  `east`,
+		`w`:  `west`,
+		`ne`: `northeast`,
+		`nw`: `northwest`,
+		`se`: `southeast`,
+		`sw`: `southwest`,
+		`u`:  `up`,
+		`d`:  `down`,
+	}
 )
 
 type FindFlag uint16
@@ -1716,6 +1729,29 @@ func (r *Room) FindNoun(noun string) (foundNoun string, nounDescription string) 
 
 func (r *Room) FindExitByName(exitNameSearch string) (exitName string, exitRoomId int) {
 
+	// Check for standard direction abbreviation first
+	searchLower := strings.ToLower(exitNameSearch)
+	if fullDirection, isStandardAbbrev := standardDirectionAbbrevs[searchLower]; isStandardAbbrev {
+		// Check if this exact direction exists in the room
+		if exitInfo, ok := r.Exits[fullDirection]; ok {
+			return fullDirection, exitInfo.RoomId
+		}
+		// Check temporary exits
+		if tempExit, ok := r.ExitsTemp[fullDirection]; ok {
+			return fullDirection, tempExit.RoomId
+		}
+		// Check mutator exits
+		for mut := range r.ActiveMutators {
+			spec := mut.GetSpec()
+			if exitInfo, ok := spec.Exits[fullDirection]; ok {
+				return fullDirection, exitInfo.RoomId
+			}
+		}
+		// Standard abbreviation used but exit doesn't exist
+		return ``, 0
+	}
+
+	// Build list of all exits for fuzzy matching
 	exitNames := []string{}
 	for exitName, _ := range r.Exits {
 		exitNames = append(exitNames, exitName)
@@ -1734,6 +1770,7 @@ func (r *Room) FindExitByName(exitNameSearch string) (exitName string, exitRoomI
 		}
 	}
 
+	// Use fuzzy matching for non-standard exits
 	exactMatch, closeMatch := util.FindMatchIn(exitNameSearch, exitNames...)
 
 	if len(exactMatch) == 0 {
