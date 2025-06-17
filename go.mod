@@ -7,7 +7,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/text v0.25.0
+	golang.org/x/text v0.26.0
 )
 
 require (
@@ -29,4 +29,3 @@ require (
 	github.com/pkg/errors v0.9.1
 	gopkg.in/yaml.v2 v2.4.0
 )
-
