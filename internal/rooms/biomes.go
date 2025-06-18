@@ -1,6 +1,15 @@
 package rooms
 
-import "strings"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/GoMudEngine/GoMud/internal/configs"
+	"github.com/GoMudEngine/GoMud/internal/mudlog"
+	"gopkg.in/yaml.v2"
+)
 
 type BiomeInfo struct {
 	name           string
@@ -11,6 +20,21 @@ type BiomeInfo struct {
 	requiredItemId int  // item id required to move into any room with this biome
 	usesItem       bool // Whether it "uses" the item (i.e. consumes it or decreases its uses left) when moving into a room with this biome
 	burns          bool // Does this area catch fire? (brush etc.)
+}
+
+type BiomeConfig struct {
+	Name           string `yaml:"name"`
+	Symbol         string `yaml:"symbol"`
+	Description    string `yaml:"description"`
+	DarkArea       bool   `yaml:"darkArea"`
+	LitArea        bool   `yaml:"litArea"`
+	RequiredItemId int    `yaml:"requiredItemId"`
+	UsesItem       bool   `yaml:"usesItem"`
+	Burns          bool   `yaml:"burns"`
+}
+
+type BiomesFile struct {
+	Biomes map[string]BiomeConfig `yaml:"biomes"`
 }
 
 func (bi BiomeInfo) Name() string {
@@ -50,6 +74,69 @@ func (bi BiomeInfo) Burns() bool {
 }
 
 var (
+	AllBiomes = map[string]BiomeInfo{}
+)
+
+func LoadBiomeDataFiles() {
+	
+	mudlog.Info("Loading biome data files")
+	
+	AllBiomes = make(map[string]BiomeInfo)
+	
+	dataFilesPath := configs.GetFilePathsConfig().DataFiles.String()
+	biomeFilePath := filepath.Join(dataFilesPath, "biomes.yaml")
+	
+	if _, err := os.Stat(biomeFilePath); err == nil {
+		loadBiomesFromFile(biomeFilePath)
+	}
+	
+	if len(AllBiomes) == 0 {
+		mudlog.Warn("No biomes loaded from files, using hardcoded defaults")
+		loadHardcodedBiomes()
+	}
+	
+	mudlog.Info("Biomes loaded", "count", len(AllBiomes))
+}
+
+func loadBiomesFromFile(biomeFilePath string) {
+	
+	mudlog.Info("Loading biomes from", "file", biomeFilePath)
+	
+	data, err := os.ReadFile(biomeFilePath)
+	if err != nil {
+		mudlog.Error("Failed to read biomes file", "error", err, "file", biomeFilePath)
+		return
+	}
+	
+	var biomesFile BiomesFile
+	if err := yaml.Unmarshal(data, &biomesFile); err != nil {
+		mudlog.Error("Failed to parse biomes file", "error", err, "file", biomeFilePath)
+		return
+	}
+	
+	for biomeName, biomeConfig := range biomesFile.Biomes {
+		var symbol rune = '?'
+		if len(biomeConfig.Symbol) > 0 {
+			for _, r := range biomeConfig.Symbol {
+				symbol = r
+				break
+			}
+		}
+		
+		AllBiomes[strings.ToLower(biomeName)] = BiomeInfo{
+			name:           biomeConfig.Name,
+			symbol:         symbol,
+			description:    biomeConfig.Description,
+			darkArea:       biomeConfig.DarkArea,
+			litArea:        biomeConfig.LitArea,
+			requiredItemId: biomeConfig.RequiredItemId,
+			usesItem:       biomeConfig.UsesItem,
+			burns:          biomeConfig.Burns,
+		}
+	}
+}
+
+func loadHardcodedBiomes() {
 	AllBiomes = map[string]BiomeInfo{
 		`city`: {
 			name:        `City`,
@@ -94,7 +181,7 @@ var (
 		},
 		`mountains`: {
 			name:        `Mountains`,
-			symbol:      '⩕', //'▲',
+			symbol:      '⩕',
 			description: `Mountains are difficult to traverse, with roads that don't often follow a straight line.`,
 		},
 		`cliffs`: {
@@ -137,7 +224,7 @@ var (
 			burns:       true,
 		},
 	}
-)
+}
 
 func GetBiome(name string) (BiomeInfo, bool) {
 	b, ok := AllBiomes[strings.ToLower(name)]
@@ -150,4 +237,29 @@ func GetAllBiomes() []BiomeInfo {
 		ret = append(ret, b)
 	}
 	return ret
+}
+
+func ValidateBiomes() []string {
+	warnings := []string{}
+	
+	expectedBiomes := []string{"city", "road", "forest"}
+	for _, biomeName := range expectedBiomes {
+		if _, ok := AllBiomes[biomeName]; !ok {
+			warnings = append(warnings, fmt.Sprintf("Expected biome '%s' not found", biomeName))
+		}
+	}
+	
+	for biomeName, biome := range AllBiomes {
+		if biome.darkArea && biome.litArea {
+			warnings = append(warnings, fmt.Sprintf("Biome '%s' has both darkArea and litArea set to true", biomeName))
+		}
+		if biome.symbol == 0 || biome.symbol == '?' {
+			warnings = append(warnings, fmt.Sprintf("Biome '%s' has invalid or missing symbol", biomeName))
+		}
+		if biome.name == "" {
+			warnings = append(warnings, fmt.Sprintf("Biome '%s' has no display name", biomeName))
+		}
+	}
+	
+	return warnings
 }
