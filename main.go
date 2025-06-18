@@ -919,6 +919,15 @@ func loadAllDataFiles(isReload bool) {
 	// Force clear all cached VM's
 	scripting.PruneVMs(true)
 
+	// Load biomes before rooms since rooms reference biomes
+	rooms.LoadBiomeDataFiles()
+	// Validate biomes after loading
+	if warnings := rooms.ValidateBiomes(); len(warnings) > 0 {
+		for _, warning := range warnings {
+			mudlog.Warn("Biome validation", "warning", warning)
+		}
+	}
+
 	spells.LoadSpellFiles()
 	rooms.LoadDataFiles()
 	buffs.LoadDataFiles() // Load buffs before items for cost calculation reasons
