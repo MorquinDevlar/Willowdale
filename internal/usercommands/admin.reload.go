@@ -27,6 +27,9 @@ func Reload(rest string, user *users.UserRecord, room *rooms.Room, flags events.
 	case `items`:
 		items.LoadDataFiles()
 		user.SendText(`Items reloaded.`)
+	case `biomes`:
+		rooms.LoadBiomeDataFiles()
+		user.SendText(`Biomes reloaded.`)
 	case `translations`:
 		ok := language.ReloadTranslation()
 		if !ok {
