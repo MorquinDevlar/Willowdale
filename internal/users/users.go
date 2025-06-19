@@ -159,24 +159,24 @@ func ReconnectUser(user *UserRecord, connectionId connections.ConnectionId) {
 	if oldConnId, ok := userManager.UserConnections[user.UserId]; ok {
 		delete(userManager.Connections, oldConnId)
 	}
-	
+
 	// Add user to all the maps
 	userManager.Users[user.UserId] = user
 	userManager.Usernames[user.Username] = user.UserId
 	userManager.Connections[connectionId] = user.UserId
 	userManager.UserConnections[user.UserId] = connectionId
-	
+
 	// Update the user's connection ID
 	user.connectionId = connectionId
-	
+
 	// Remove zombie status if applicable
 	delete(userManager.ZombieConnections, connectionId)
 	user.Character.SetAdjective(`zombie`, false)
 	user.isZombie = false
-	
+
 	// Set their input round to current to track idle time fresh
 	user.SetLastInputRound(util.GetRoundCount())
-	
+
 	mudlog.Info("ReconnectUser", "userId", user.UserId, "username", user.Username, "connectionId", connectionId)
 }
 

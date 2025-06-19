@@ -66,7 +66,7 @@ var (
 		`conditions`:  {Conditions, true, false},
 		`consider`:    {Consider, true, false},
 		`copyover`:    {Copyover, true, true}, // Admin only
-		`deafen`:      {Deafen, true, true}, // Admin only
+		`deafen`:      {Deafen, true, true},   // Admin only
 		`default`:     {Default, false, false},
 		`disarm`:      {Disarm, false, false},
 		`drop`:        {Drop, true, false},

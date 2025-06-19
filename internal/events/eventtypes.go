@@ -374,3 +374,82 @@ type RedrawPrompt struct {
 
 func (l RedrawPrompt) Type() string     { return `RedrawPrompt` }
 func (l RedrawPrompt) UniqueID() string { return `RedrawPrompt-` + strconv.Itoa(l.UserId) }
+
+// CopyoverScheduled is fired when a copyover is scheduled
+type CopyoverScheduled struct {
+	ScheduledAt time.Time
+	Countdown   int    // seconds until copyover
+	Reason      string // why the copyover was scheduled
+	InitiatedBy int    // userId of admin who initiated
+}
+
+func (c CopyoverScheduled) Type() string { return `CopyoverScheduled` }
+
+// CopyoverStateChange is fired when copyover changes state
+type CopyoverStateChange struct {
+	OldState string
+	NewState string
+	Progress int // 0-100 for phases like building
+}
+
+func (c CopyoverStateChange) Type() string { return `CopyoverStateChange` }
+
+// CopyoverGatherState is fired during state collection phase
+type CopyoverGatherState struct {
+	Phase        string // "listeners", "connections", "world", "modules"
+	TotalPhases  int
+	CurrentPhase int
+}
+
+func (c CopyoverGatherState) Type() string { return `CopyoverGatherState` }
+
+// CopyoverRestoreState is fired during state restoration phase
+type CopyoverRestoreState struct {
+	Phase       string
+	TotalSteps  int
+	CurrentStep int
+	Success     bool
+	Error       string
+}
+
+func (c CopyoverRestoreState) Type() string { return `CopyoverRestoreState` }
+
+// CopyoverCancelled is fired when a copyover is cancelled
+type CopyoverCancelled struct {
+	Reason      string
+	CancelledBy int // userId of admin who cancelled
+}
+
+func (c CopyoverCancelled) Type() string { return `CopyoverCancelled` }
+
+// CopyoverCompleted is fired after successful copyover
+type CopyoverCompleted struct {
+	Duration         time.Duration
+	BuildNumber      string
+	OldBuildNumber   string
+	ConnectionsSaved int
+	ConnectionsLost  int
+	StartTime        time.Time
+	EndTime          time.Time
+}
+
+func (c CopyoverCompleted) Type() string { return `CopyoverCompleted` }
+
+// CopyoverVeto is fired when something wants to prevent copyover
+type CopyoverVeto struct {
+	ModuleName string
+	Reason     string
+	VetoType   string // "soft" (warning) or "hard" (blocking)
+	Timestamp  time.Time
+}
+
+func (c CopyoverVeto) Type() string { return `CopyoverVeto` }
+
+// CopyoverPhaseChange is fired when the copyover system transitions between phases
+type CopyoverPhaseChange struct {
+	OldState string
+	NewState string
+	Progress int
+}
+
+func (c CopyoverPhaseChange) Type() string { return `CopyoverPhaseChange` }

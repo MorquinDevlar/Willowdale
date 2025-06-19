@@ -20,12 +20,12 @@ func GetFileDescriptor(connId ConnectionId) (*os.File, error) {
 	if cd == nil {
 		return nil, nil
 	}
-	
+
 	conn := cd.GetRawConnection()
 	if conn == nil {
 		return nil, nil
 	}
-	
+
 	// Type assert to get file
 	switch c := conn.(type) {
 	case *net.TCPConn:
@@ -36,4 +36,3 @@ func GetFileDescriptor(connId ConnectionId) (*os.File, error) {
 		return nil, nil
 	}
 }
-

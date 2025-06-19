@@ -78,42 +78,42 @@ var (
 )
 
 func LoadBiomeDataFiles() {
-	
+
 	mudlog.Info("Loading biome data files")
-	
+
 	AllBiomes = make(map[string]BiomeInfo)
-	
+
 	dataFilesPath := configs.GetFilePathsConfig().DataFiles.String()
 	biomeFilePath := filepath.Join(dataFilesPath, "biomes.yaml")
-	
+
 	if _, err := os.Stat(biomeFilePath); err == nil {
 		loadBiomesFromFile(biomeFilePath)
 	}
-	
+
 	if len(AllBiomes) == 0 {
 		mudlog.Warn("No biomes loaded from files, using hardcoded defaults")
 		loadHardcodedBiomes()
 	}
-	
+
 	mudlog.Info("Biomes loaded", "count", len(AllBiomes))
 }
 
 func loadBiomesFromFile(biomeFilePath string) {
-	
+
 	mudlog.Info("Loading biomes from", "file", biomeFilePath)
-	
+
 	data, err := os.ReadFile(biomeFilePath)
 	if err != nil {
 		mudlog.Error("Failed to read biomes file", "error", err, "file", biomeFilePath)
 		return
 	}
-	
+
 	var biomesFile BiomesFile
 	if err := yaml.Unmarshal(data, &biomesFile); err != nil {
 		mudlog.Error("Failed to parse biomes file", "error", err, "file", biomeFilePath)
 		return
 	}
-	
+
 	for biomeName, biomeConfig := range biomesFile.Biomes {
 		var symbol rune = '?'
 		if len(biomeConfig.Symbol) > 0 {
@@ -122,7 +122,7 @@ func loadBiomesFromFile(biomeFilePath string) {
 				break
 			}
 		}
-		
+
 		AllBiomes[strings.ToLower(biomeName)] = BiomeInfo{
 			name:           biomeConfig.Name,
 			symbol:         symbol,
@@ -241,14 +241,14 @@ func GetAllBiomes() []BiomeInfo {
 
 func ValidateBiomes() []string {
 	warnings := []string{}
-	
+
 	expectedBiomes := []string{"city", "road", "forest"}
 	for _, biomeName := range expectedBiomes {
 		if _, ok := AllBiomes[biomeName]; !ok {
 			warnings = append(warnings, fmt.Sprintf("Expected biome '%s' not found", biomeName))
 		}
 	}
-	
+
 	for biomeName, biome := range AllBiomes {
 		if biome.darkArea && biome.litArea {
 			warnings = append(warnings, fmt.Sprintf("Biome '%s' has both darkArea and litArea set to true", biomeName))
@@ -260,6 +260,6 @@ func ValidateBiomes() []string {
 			warnings = append(warnings, fmt.Sprintf("Biome '%s' has no display name", biomeName))
 		}
 	}
-	
+
 	return warnings
 }
