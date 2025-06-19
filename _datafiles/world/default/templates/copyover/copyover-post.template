@@ -1,0 +1,12 @@
+<ansi fg="green-bold">
+================================================================================
+                          COPYOVER COMPLETE - BUILD {{.BuildNumber}}
+================================================================================</ansi>
+
+<ansi fg="cyan">Welcome back! The server has been successfully reloaded.</ansi>
+
+<ansi fg="green">✓ All systems operational
+✓ Your session has been restored
+✓ You may continue playing</ansi>
+
+{{if .Duration}}<ansi fg="white">Copyover completed in {{.Duration}}</ansi>{{end}}

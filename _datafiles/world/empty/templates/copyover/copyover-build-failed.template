@@ -1,0 +1,4 @@
+<ansi fg="red-bold">=== BUILD FAILED - COPYOVER CANCELLED ===</ansi>
+
+<ansi fg="white">The build process encountered an error. The copyover has been cancelled.
+The game will continue running on the current version.</ansi>

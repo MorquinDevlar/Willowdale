@@ -61,6 +61,28 @@ func Add(conn net.Conn, wsConn *websocket.Conn) *ConnectionDetails {
 	return connDetails
 }
 
+// AddWithId adds a connection with a specific ID (used for copyover recovery)
+func AddWithId(id ConnectionId, conn net.Conn, wsConn *websocket.Conn) *ConnectionDetails {
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Update counter if needed to avoid conflicts
+	if id >= connectCounter {
+		connectCounter = id + 1
+	}
+
+	connDetails := NewConnectionDetails(
+		id,
+		conn,
+		wsConn,
+		nil, // use default settings for now
+	)
+
+	netConnections[connDetails.ConnectionId()] = connDetails
+
+	return connDetails
+}
+
 // Returns the total number of connections
 func Get(id ConnectionId) *ConnectionDetails {
 	lock.Lock()

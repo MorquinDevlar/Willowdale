@@ -45,20 +45,28 @@ func HandleJoin(e events.Event) events.ListenerReturn {
 		room = rooms.LoadRoom(user.Character.RoomId)
 	}
 
-	// TODO HERE
-	loginCmds := configs.GetConfig().Server.OnLoginCommands
-	if len(loginCmds) > 0 {
+	// Check if this is a copyover recovery
+	isCopyoverRecovery := user.GetConfigOption("copyover_recovery") == "true"
+	if isCopyoverRecovery {
+		// Clear the flag
+		user.SetConfigOption("copyover_recovery", "")
+		mudlog.Info("HandleJoin", "info", "Skipping OnLoginCommands for copyover recovery", "userId", evt.UserId)
+	} else {
+		// Execute OnLoginCommands only for normal logins
+		loginCmds := configs.GetConfig().Server.OnLoginCommands
+		if len(loginCmds) > 0 {
 
-		for _, cmd := range loginCmds {
+			for _, cmd := range loginCmds {
 
-			events.AddToQueue(events.Input{
-				UserId:    evt.UserId,
-				InputText: cmd,
-				ReadyTurn: 0, // No delay between execution of commands
-			})
+				events.AddToQueue(events.Input{
+					UserId:    evt.UserId,
+					InputText: cmd,
+					ReadyTurn: 0, // No delay between execution of commands
+				})
+
+			}
 
 		}
-
 	}
 
 	if room != nil {

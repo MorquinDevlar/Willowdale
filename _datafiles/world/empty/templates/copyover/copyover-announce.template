@@ -1,0 +1,12 @@
+<ansi fg="yellow-bold">
+================================================================================
+                         SERVER COPYOVER SCHEDULED
+================================================================================</ansi>
+
+<ansi fg="cyan">A server hot reload has been scheduled to apply updates.</ansi>
+
+{{if .Minutes}}<ansi fg="yellow">Time until copyover: {{.Minutes}} minute{{if ne .Minutes 1}}s{{end}}</ansi>{{end}}
+{{if .Seconds}}<ansi fg="yellow">Time until copyover: {{.Seconds}} second{{if ne .Seconds 1}}s{{end}}</ansi>{{end}}
+
+<ansi fg="white">The game will continue normally until the copyover begins.
+You will NOT be disconnected during this process.</ansi>
