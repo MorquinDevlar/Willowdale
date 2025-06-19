@@ -1,0 +1,13 @@
+<ansi fg="yellow-bold">
+================================================================================
+                           SERVER COPYOVER IMMINENT
+================================================================================</ansi>
+
+<ansi fg="cyan">The server is about to perform a hot reload. You will remain connected
+during this process. The game will pause briefly while the new code loads.</ansi>
+
+<ansi fg="green">✓ Your character data is being saved
+✓ Your connection will be preserved  
+✓ You will be returned to your current location</ansi>
+
+<ansi fg="yellow">Please wait...</ansi>

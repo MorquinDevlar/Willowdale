@@ -23,6 +23,7 @@ import (
 	"github.com/GoMudEngine/GoMud/internal/colorpatterns"
 	"github.com/GoMudEngine/GoMud/internal/configs"
 	"github.com/GoMudEngine/GoMud/internal/connections"
+	"github.com/GoMudEngine/GoMud/internal/copyover"
 	"github.com/GoMudEngine/GoMud/internal/events"
 	"github.com/GoMudEngine/GoMud/internal/flags"
 	"github.com/GoMudEngine/GoMud/internal/gametime"
@@ -56,6 +57,13 @@ import (
 	textLang "golang.org/x/text/language"
 )
 
+const (
+	// Version is the current version of the server
+	Version = `1.0.0`
+	// Build number for testing copyover
+	BuildNumber = `001`
+)
+
 var (
 	sigChan            = make(chan os.Signal, 1)
 	workerShutdownChan = make(chan bool, 1)
@@ -71,6 +79,9 @@ var (
 func main() {
 
 	serverStartTime := time.Now()
+
+	// Set build number for copyover display
+	copyover.SetBuildNumber(BuildNumber)
 
 	// Capture panic and write msg/stack to logs
 	defer func() {
@@ -92,6 +103,12 @@ func main() {
 	)
 
 	flags.HandleFlags()
+
+	// Check if this is a copyover recovery
+	if copyover.IsCopyoverRecovery() {
+		mudlog.Info("Copyover", "mode", "recovery detected")
+		// We'll handle recovery after config is loaded
+	}
 
 	configs.ReloadConfig()
 	c := configs.GetConfig()
@@ -220,6 +237,30 @@ func main() {
 	//events.SetDebug(true)
 
 	//
+	// Check for copyover recovery before starting listeners
+	//
+	var recoveredListeners map[string]net.Listener
+	if copyover.IsCopyoverRecovery() {
+		mudlog.Info(`========================`)
+		mudlog.Info("COPYOVER RECOVERY MODE")
+		mudlog.Info(`========================`)
+
+		// Register restorers BEFORE recovery
+		copyover.RegisterConnectionRestorers()
+
+		// Perform recovery
+		if err := copyover.GetManager().RecoverFromCopyover(); err != nil {
+			mudlog.Error("Copyover recovery failed", "error", err)
+			// Continue with normal startup
+		} else {
+			// Try to recover listeners
+			if state, err := copyover.GetManager().GetState(); err == nil && state != nil {
+				recoveredListeners = copyover.RecoverListeners(state)
+			}
+		}
+	}
+
+	//
 	// Spin up server listeners
 	//
 
@@ -229,23 +270,82 @@ func main() {
 	mudlog.Info(`========================`)
 	web.Listen(&wg, HandleWebSocketConnection)
 
+	// Create a map to track all listeners for copyover
+	allListeners := make(map[string]net.Listener)
 	allServerListeners := make([]net.Listener, 0, len(c.Network.TelnetPort))
+
+	// Check if we have recovered listeners
+	portIndex := 0
 	for _, port := range c.Network.TelnetPort {
 		if p, err := strconv.Atoi(port); err == nil {
-			if s := TelnetListenOnPort(``, p, &wg, int(c.Network.MaxTelnetConnections)); s != nil {
-				allServerListeners = append(allServerListeners, s)
+			listenerName := fmt.Sprintf("telnet-%d", p)
+
+			// Check if we have a recovered listener for this port
+			var listener net.Listener
+			if recoveredListeners != nil {
+				if recovered, ok := recoveredListeners[listenerName]; ok {
+					listener = recovered
+					mudlog.Info("Using recovered listener", "port", p)
+				}
+			}
+
+			// If no recovered listener, create new one
+			if listener == nil {
+				listener = TelnetListenOnPort(``, p, &wg, int(c.Network.MaxTelnetConnections))
+			}
+
+			if listener != nil {
+				allServerListeners = append(allServerListeners, listener)
+				allListeners[listenerName] = listener
 			}
 		}
+		portIndex++
 	}
 
 	if c.Network.LocalPort > 0 {
-		TelnetListenOnPort(`127.0.0.1`, int(c.Network.LocalPort), &wg, 0)
+		listenerName := fmt.Sprintf("telnet-local-%d", c.Network.LocalPort)
+
+		// Check if we have a recovered listener
+		var listener net.Listener
+		if recoveredListeners != nil {
+			if recovered, ok := recoveredListeners[listenerName]; ok {
+				listener = recovered
+				mudlog.Info("Using recovered local listener", "port", c.Network.LocalPort)
+			}
+		}
+
+		// If no recovered listener, create new one
+		if listener == nil {
+			listener = TelnetListenOnPort(`127.0.0.1`, int(c.Network.LocalPort), &wg, 0)
+		}
+
+		if listener != nil {
+			allListeners[listenerName] = listener
+		}
 	}
+
+	// Register connection gatherers with the listeners
+	copyover.RegisterConnectionGatherers(allListeners)
+	// Connection restorers are registered earlier during recovery
 
 	go worldManager.InputWorker(workerShutdownChan, &wg)
 	go worldManager.MainWorker(workerShutdownChan, &wg)
 
 	mudlog.Info("Server Ready", "Time Taken", time.Since(serverStartTime))
+
+	// If we're recovering from copyover, complete user recovery now that the world is running
+	if copyover.IsRecovering() {
+		// Give the workers a moment to start
+		time.Sleep(100 * time.Millisecond)
+		recoveredConnections := copyover.CompleteUserRecovery(worldManager.SendEnterWorld)
+
+		// Start input handlers for recovered connections
+		for _, connDetails := range recoveredConnections {
+			mudlog.Info("Starting input handler for recovered connection", "connectionId", connDetails.ConnectionId())
+			wg.Add(1)
+			go handleRecoveredConnection(connDetails, &wg)
+		}
+	}
 
 	// block until a signal comes in
 	<-sigChan
@@ -673,6 +773,118 @@ func handleTelnetConnection(connDetails *connections.ConnectionDetails, wg *sync
 
 	}
 
+}
+
+func handleRecoveredConnection(connDetails *connections.ConnectionDetails, wg *sync.WaitGroup) {
+	defer func() {
+		wg.Done()
+	}()
+
+	mudlog.Info("Handling recovered connection", "connectionId", connDetails.ConnectionId())
+
+	// Get the user associated with this connection
+	userObject := users.GetByConnectionId(connDetails.ConnectionId())
+	if userObject == nil {
+		mudlog.Error("No user found for recovered connection", "connectionId", connDetails.ConnectionId())
+		connections.Remove(connDetails.ConnectionId())
+		return
+	}
+
+	// Input handlers have already been set up in the recovery process
+	// We just need to start reading from the connection
+
+	// an input buffer for reading data sent over the network
+	inputBuffer := make([]byte, connections.ReadBufferSize)
+
+	// Describes whatever the client sent us
+	clientInput := &connections.ClientInput{
+		ConnectionId: connDetails.ConnectionId(),
+		DataIn:       []byte{},
+		Buffer:       make([]byte, 0, connections.ReadBufferSize),
+		EnterPressed: false,
+		Clipboard:    []byte{},
+		History:      connections.InputHistory{},
+	}
+
+	c := configs.GetConfig()
+
+	// Setup shared state map for this connection's handlers
+	var sharedState map[string]any = make(map[string]any)
+
+	// Send initial prompt to show we're ready
+	pTxt := userObject.GetCommandPrompt()
+	if !connections.IsWebsocket(clientInput.ConnectionId) {
+		connections.SendTo([]byte(templates.AnsiParse(pTxt)), clientInput.ConnectionId)
+	} else {
+		connections.SendTo([]byte(pTxt), clientInput.ConnectionId)
+	}
+
+	for {
+		clientInput.EnterPressed = false
+		clientInput.TabPressed = false
+		clientInput.BSPressed = false
+
+		n, err := connDetails.Read(inputBuffer)
+		if err != nil {
+			// Handle disconnect
+			if userObject != nil {
+				userObject.EventLog.Add(`conn`, `Disconnected`)
+				if c.Network.ZombieSeconds > 0 {
+					connDetails.SetState(connections.Zombie)
+					worldManager.SendSetZombie(userObject.UserId, true)
+				} else {
+					worldManager.SendLeaveWorld(userObject.UserId)
+					worldManager.SendLogoutConnectionId(connDetails.ConnectionId())
+				}
+			}
+			mudlog.Warn("Telnet", "connectionID", connDetails.ConnectionId(), "error", err)
+			connections.Remove(connDetails.ConnectionId())
+			break
+		}
+
+		if connDetails.InputDisabled() {
+			continue
+		}
+
+		clientInput.DataIn = inputBuffer[:n]
+
+		// Handle input
+		okContinue, lastHandlerName, err := connDetails.HandleInput(clientInput, sharedState)
+		if err != nil {
+			mudlog.Warn("InputHandler Error", "handler", lastHandlerName, "error", err)
+			connections.Remove(clientInput.ConnectionId)
+			break
+		}
+
+		// For recovered connections, we're already logged in, so just process input normally
+		if okContinue {
+			// Process the input normally - this is after all handlers have run
+
+			// Check for disconnection
+			if strings.ToLower(string(clientInput.Buffer)) == `quit` {
+				worldManager.SendLeaveWorld(userObject.UserId)
+				worldManager.SendLogoutConnectionId(clientInput.ConnectionId)
+				connections.Remove(clientInput.ConnectionId)
+				break
+			}
+
+			// Handle enter press - send command to world
+			if clientInput.EnterPressed && len(clientInput.Buffer) > 0 {
+				clientInput.History.Add(clientInput.Buffer)
+				clientInput.History.ResetPosition()
+				clientInput.LastSubmitted = make([]byte, len(clientInput.Buffer))
+				copy(clientInput.LastSubmitted, clientInput.Buffer)
+
+				worldManager.SendInput(WorldInput{
+					FromId:    userObject.UserId,
+					InputText: string(clientInput.Buffer),
+					ReadyTurn: util.GetRoundCount() + 1,
+				})
+
+				clientInput.Buffer = clientInput.Buffer[:0]
+			}
+		}
+	}
 }
 
 func HandleWebSocketConnection(conn *websocket.Conn) {
