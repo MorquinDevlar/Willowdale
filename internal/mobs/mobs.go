@@ -784,3 +784,14 @@ func LoadDataFiles() {
 	mudlog.Info("mobs.LoadDataFiles()", "loadedCount", len(mobs), "Time Taken", time.Since(start))
 
 }
+
+// GetInstanceCounter returns the current mob instance counter value
+func GetInstanceCounter() int {
+	return instanceCounter
+}
+
+// SetInstanceCounter sets the mob instance counter to a specific value
+// This is used during copyover to maintain consistent instance IDs
+func SetInstanceCounter(value int) {
+	instanceCounter = value
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GoMudEngine/GoMud/internal/copyover"
 	"github.com/GoMudEngine/GoMud/internal/events"
 	"github.com/GoMudEngine/GoMud/internal/items"
 	"github.com/GoMudEngine/GoMud/internal/plugins"
@@ -67,6 +68,12 @@ func init() {
 	a.plug.Callbacks.SetOnSave(a.save)
 
 	events.RegisterListener(events.NewRound{}, a.newRoundHandler)
+
+	// Register for copyover participation
+	if err := copyover.RegisterModule(&a); err != nil {
+		// Log but don't panic - copyover is optional
+		panic(fmt.Sprintf("Failed to register auction module for copyover: %v", err))
+	}
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -690,4 +697,187 @@ func (am *AuctionManager) GetLastAuction() PastAuctionItem {
 	}
 
 	return am.PastAuctions[len(am.PastAuctions)-1]
+}
+
+// AuctionCopyoverState represents the auction state during copyover
+type AuctionCopyoverState struct {
+	// We need to store item data in a way that can be reconstructed
+	ItemId            int       `json:"item_id"`
+	SellerUserId      int       `json:"seller_user_id"`
+	SellerName        string    `json:"seller_name"`
+	Anonymous         bool      `json:"anonymous"`
+	EndTime           time.Time `json:"end_time"`
+	MinimumBid        int       `json:"minimum_bid"`
+	HighestBid        int       `json:"highest_bid"`
+	HighestBidUserId  int       `json:"highest_bid_user_id"`
+	HighestBidderName string    `json:"highest_bidder_name"`
+	LastUpdate        time.Time `json:"last_update"`
+}
+
+// Copyover participation interface implementation
+
+// ModuleName returns the unique name of this module
+func (mod *AuctionsModule) ModuleName() string {
+	return "auctions"
+}
+
+// GatherState collects auction state before copyover
+func (mod *AuctionsModule) GatherState() (interface{}, error) {
+	// We only need to save the active auction
+	// Past auctions are already persisted via save/load
+	if mod.auctionMgr.ActiveAuction == nil {
+		return nil, nil // No active auction
+	}
+
+	// Create a serializable state
+	auction := mod.auctionMgr.ActiveAuction
+	state := AuctionCopyoverState{
+		ItemId:            auction.ItemData.ItemId,
+		SellerUserId:      auction.SellerUserId,
+		SellerName:        auction.SellerName,
+		Anonymous:         auction.Anonymous,
+		EndTime:           auction.EndTime,
+		MinimumBid:        auction.MinimumBid,
+		HighestBid:        auction.HighestBid,
+		HighestBidUserId:  auction.HighestBidUserId,
+		HighestBidderName: auction.HighestBidderName,
+		LastUpdate:        auction.LastUpdate,
+	}
+
+	return state, nil
+}
+
+// RestoreState restores auction state after copyover
+func (mod *AuctionsModule) RestoreState(data interface{}) error {
+	if data == nil {
+		return nil // No state to restore
+	}
+
+	// Type assert to AuctionCopyoverState
+	state, ok := data.(AuctionCopyoverState)
+	if !ok {
+		// Try to handle map[string]interface{} from JSON unmarshal
+		if mapData, mapOk := data.(map[string]interface{}); mapOk {
+			// Manually reconstruct from map
+			// This is needed because the module system uses JSON internally
+			return mod.restoreFromMap(mapData)
+		}
+		return fmt.Errorf("invalid auction state type: %T", data)
+	}
+
+	// Reconstruct the auction item
+	// We need to load the actual item from the item system
+	// For now, we'll create a basic item with the ID
+	// In a real implementation, you'd load from your item database
+	item := items.Item{
+		ItemId: state.ItemId,
+	}
+
+	// Restore the active auction
+	mod.auctionMgr.ActiveAuction = &AuctionItem{
+		ItemData:          item,
+		SellerUserId:      state.SellerUserId,
+		SellerName:        state.SellerName,
+		Anonymous:         state.Anonymous,
+		EndTime:           state.EndTime,
+		MinimumBid:        state.MinimumBid,
+		HighestBid:        state.HighestBid,
+		HighestBidUserId:  state.HighestBidUserId,
+		HighestBidderName: state.HighestBidderName,
+		LastUpdate:        state.LastUpdate,
+	}
+
+	// Check if auction ended during copyover
+	if mod.auctionMgr.ActiveAuction.IsEnded() {
+		// Process the end in the next round
+		// The newRoundHandler will handle it naturally
+	}
+
+	return nil
+}
+
+// CanCopyover checks if it's safe to do a copyover
+func (mod *AuctionsModule) CanCopyover() (bool, copyover.VetoInfo) {
+	auction := mod.auctionMgr.ActiveAuction
+	if auction == nil {
+		// No active auction, safe to copyover
+		return true, copyover.VetoInfo{}
+	}
+
+	timeLeft := time.Until(auction.EndTime)
+
+	// Hard veto if auction ending in less than 30 seconds
+	if timeLeft > 0 && timeLeft < 30*time.Second {
+		return false, copyover.VetoInfo{
+			Module: mod.ModuleName(),
+			Reason: fmt.Sprintf("Auction ending in %d seconds", int(timeLeft.Seconds())),
+			Type:   "hard",
+		}
+	}
+
+	// Soft veto if auction ending in less than 2 minutes
+	if timeLeft > 0 && timeLeft < 2*time.Minute {
+		return false, copyover.VetoInfo{
+			Module: mod.ModuleName(),
+			Reason: fmt.Sprintf("Auction ending soon (%s)", timeLeft.Round(time.Second)),
+			Type:   "soft",
+		}
+	}
+
+	return true, copyover.VetoInfo{}
+}
+
+// PrepareCopyover prepares the module for copyover
+func (mod *AuctionsModule) PrepareCopyover() error {
+	// Nothing special to do - auctions will naturally pause
+	// during copyover since no rounds will fire
+	return nil
+}
+
+// CleanupCopyover cleans up after a cancelled copyover
+func (mod *AuctionsModule) CleanupCopyover() error {
+	// Nothing to clean up - auctions continue as normal
+	return nil
+}
+
+// restoreFromMap handles JSON unmarshaled data
+func (mod *AuctionsModule) restoreFromMap(data map[string]interface{}) error {
+	// Extract fields from map
+	itemId, _ := data["item_id"].(float64) // JSON numbers are float64
+	sellerUserId, _ := data["seller_user_id"].(float64)
+	sellerName, _ := data["seller_name"].(string)
+	anonymous, _ := data["anonymous"].(bool)
+	minimumBid, _ := data["minimum_bid"].(float64)
+	highestBid, _ := data["highest_bid"].(float64)
+	highestBidUserId, _ := data["highest_bid_user_id"].(float64)
+	highestBidderName, _ := data["highest_bidder_name"].(string)
+
+	// Parse times
+	endTimeStr, _ := data["end_time"].(string)
+	lastUpdateStr, _ := data["last_update"].(string)
+
+	endTime, _ := time.Parse(time.RFC3339, endTimeStr)
+	lastUpdate, _ := time.Parse(time.RFC3339, lastUpdateStr)
+
+	// Load the item
+	// For now, we'll create a basic item with the ID
+	item := items.Item{
+		ItemId: int(itemId),
+	}
+
+	// Restore the auction
+	mod.auctionMgr.ActiveAuction = &AuctionItem{
+		ItemData:          item,
+		SellerUserId:      int(sellerUserId),
+		SellerName:        sellerName,
+		Anonymous:         anonymous,
+		EndTime:           endTime,
+		MinimumBid:        int(minimumBid),
+		HighestBid:        int(highestBid),
+		HighestBidUserId:  int(highestBidUserId),
+		HighestBidderName: highestBidderName,
+		LastUpdate:        lastUpdate,
+	}
+
+	return nil
 }
