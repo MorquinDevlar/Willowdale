@@ -178,6 +178,22 @@ func (m *Manager) GetRecoveredConnections() []*connections.ConnectionDetails {
 	return m.recoveredConnections
 }
 
+// ClearRecoveryState clears the recovery flag after copyover is complete
+func (m *Manager) ClearRecoveryState() {
+	recoveryMu.Lock()
+	defer recoveryMu.Unlock()
+	isRecovering = false
+	mudlog.Info("Copyover", "status", "Recovery state cleared")
+}
+
+// ClearRecoveryState clears the recovery flag after copyover is complete
+func ClearRecoveryState() {
+	recoveryMu.Lock()
+	defer recoveryMu.Unlock()
+	isRecovering = false
+	mudlog.Info("Copyover", "status", "Recovery state cleared")
+}
+
 // InitiateCopyover starts the copyover process
 func (m *Manager) InitiateCopyover(countdown int) (*CopyoverResult, error) {
 	// Check if we can start

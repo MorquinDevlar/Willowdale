@@ -282,9 +282,11 @@ func main() {
 
 			// Check if we have a recovered listener for this port
 			var listener net.Listener
+			var isRecovered bool
 			if recoveredListeners != nil {
 				if recovered, ok := recoveredListeners[listenerName]; ok {
 					listener = recovered
+					isRecovered = true
 					mudlog.Info("Using recovered listener", "port", p)
 				}
 			}
@@ -292,6 +294,9 @@ func main() {
 			// If no recovered listener, create new one
 			if listener == nil {
 				listener = TelnetListenOnPort(``, p, &wg, int(c.Network.MaxTelnetConnections))
+			} else if isRecovered {
+				// For recovered listeners, we need to start the accept loop
+				startTelnetAcceptLoop(listener, &wg, int(c.Network.MaxTelnetConnections))
 			}
 
 			if listener != nil {
@@ -307,9 +312,11 @@ func main() {
 
 		// Check if we have a recovered listener
 		var listener net.Listener
+		var isRecovered bool
 		if recoveredListeners != nil {
 			if recovered, ok := recoveredListeners[listenerName]; ok {
 				listener = recovered
+				isRecovered = true
 				mudlog.Info("Using recovered local listener", "port", c.Network.LocalPort)
 			}
 		}
@@ -317,6 +324,9 @@ func main() {
 		// If no recovered listener, create new one
 		if listener == nil {
 			listener = TelnetListenOnPort(`127.0.0.1`, int(c.Network.LocalPort), &wg, 0)
+		} else if isRecovered {
+			// For recovered listeners, we need to start the accept loop
+			startTelnetAcceptLoop(listener, &wg, 0)
 		}
 
 		if listener != nil {
@@ -335,8 +345,8 @@ func main() {
 
 	// If we're recovering from copyover, complete user recovery now that the world is running
 	if copyover.IsRecovering() {
-		// Give the workers a moment to start
-		time.Sleep(100 * time.Millisecond)
+		// Give the workers time to fully start before recovering users
+		time.Sleep(2 * time.Second)
 		recoveredConnections := copyover.CompleteUserRecovery(worldManager.SendEnterWorld)
 
 		// Start input handlers for recovered connections
@@ -375,8 +385,14 @@ func main() {
 	// cleanup all connections
 	connections.Cleanup()
 
-	for _, s := range allServerListeners {
-		s.Close()
+	// Only close listeners if we're not doing copyover
+	// During copyover, the listeners are passed to the child process
+	if !copyover.GetManager().IsInProgress() {
+		for _, s := range allServerListeners {
+			s.Close()
+		}
+	} else {
+		mudlog.Info("Copyover", "info", "Skipping listener close during copyover")
 	}
 
 	web.Shutdown()
@@ -811,12 +827,43 @@ func handleRecoveredConnection(connDetails *connections.ConnectionDetails, wg *s
 	// Setup shared state map for this connection's handlers
 	var sharedState map[string]any = make(map[string]any)
 
-	// Send initial prompt to show we're ready
-	pTxt := userObject.GetCommandPrompt()
-	if !connections.IsWebsocket(clientInput.ConnectionId) {
-		connections.SendTo([]byte(templates.AnsiParse(pTxt)), clientInput.ConnectionId)
-	} else {
-		connections.SendTo([]byte(pTxt), clientInput.ConnectionId)
+	// Send telnet setup commands that were missed during recovery
+	if !connections.IsWebsocket(connDetails.ConnectionId()) {
+		// Send request to enable MSP
+		connections.SendTo(
+			term.MspEnable.BytesWithPayload(nil),
+			connDetails.ConnectionId(),
+		)
+
+		// Tell the client we intend to suppress go ahead
+		connections.SendTo(
+			term.TelnetWILL(term.TELNET_OPT_SUP_GO_AHD),
+			connDetails.ConnectionId(),
+		)
+
+		// Tell the client we expect chars as they are typed
+		connections.SendTo(
+			term.TelnetWONT(term.TELNET_OPT_LINE_MODE),
+			connDetails.ConnectionId(),
+		)
+
+		// Tell the client we intend to echo back what they type
+		connections.SendTo(
+			term.TelnetWILL(term.TELNET_OPT_ECHO),
+			connDetails.ConnectionId(),
+		)
+
+		// Request that the client report window size changes
+		connections.SendTo(
+			term.TelnetDO(term.TELNET_OPT_NAWS),
+			connDetails.ConnectionId(),
+		)
+
+		// Request client resolution
+		connections.SendTo(
+			[]byte(term.AnsiRequestResolution.String()),
+			connDetails.ConnectionId(),
+		)
 	}
 
 	for {
@@ -1065,17 +1112,10 @@ func HandleWebSocketConnection(conn *websocket.Conn) {
 	}
 }
 
-func TelnetListenOnPort(hostname string, portNum int, wg *sync.WaitGroup, maxConnections int) net.Listener {
-
-	server, err := net.Listen("tcp", fmt.Sprintf("%s:%d", hostname, portNum))
-	if err != nil {
-		mudlog.Error("Error creating server", "error", err)
-		return nil
-	}
-
+// startTelnetAcceptLoop starts the goroutine that accepts connections on a listener
+func startTelnetAcceptLoop(server net.Listener, wg *sync.WaitGroup, maxConnections int) {
 	// Start a goroutine to accept incoming connections, so that we can use a signal to stop the server
 	go func() {
-
 		// Loop to accept connections
 		for {
 			conn, err := server.Accept()
@@ -1087,8 +1127,14 @@ func TelnetListenOnPort(hostname string, portNum int, wg *sync.WaitGroup, maxCon
 
 			if err != nil {
 				mudlog.Warn("Connection error", "error", err)
+				// Check if the listener is closed
+				if opErr, ok := err.(*net.OpError); ok {
+					mudlog.Error("Accept error details", "op", opErr.Op, "net", opErr.Net, "addr", opErr.Addr)
+				}
 				continue
 			}
+
+			mudlog.Info("New connection accepted", "remoteAddr", conn.RemoteAddr().String())
 
 			if maxConnections > 0 {
 				if connections.ActiveConnectionCount() >= maxConnections {
@@ -1104,9 +1150,18 @@ func TelnetListenOnPort(hostname string, portNum int, wg *sync.WaitGroup, maxCon
 				connections.Add(conn, nil),
 				wg,
 			)
-
 		}
 	}()
+}
+
+func TelnetListenOnPort(hostname string, portNum int, wg *sync.WaitGroup, maxConnections int) net.Listener {
+	server, err := net.Listen("tcp", fmt.Sprintf("%s:%d", hostname, portNum))
+	if err != nil {
+		mudlog.Error("Error creating server", "error", err)
+		return nil
+	}
+
+	startTelnetAcceptLoop(server, wg, maxConnections)
 
 	return server
 }

@@ -179,6 +179,44 @@ func deserializeEvent(serialized SerializedEvent) (Event, error) {
 		// Note: Item reconstruction would need item system integration
 		return evt, nil
 
+	case "RedrawPrompt":
+		evt := RedrawPrompt{}
+		if v, ok := serialized.Data["UserId"].(float64); ok {
+			evt.UserId = int(v)
+		}
+		if v, ok := serialized.Data["OnlyIfChanged"].(bool); ok {
+			evt.OnlyIfChanged = v
+		}
+		return evt, nil
+
+	case "Message":
+		evt := Message{}
+		if v, ok := serialized.Data["UserId"].(float64); ok {
+			evt.UserId = int(v)
+		}
+		if v, ok := serialized.Data["RoomId"].(float64); ok {
+			evt.RoomId = int(v)
+		}
+		if v, ok := serialized.Data["Text"].(string); ok {
+			evt.Text = v
+		}
+		if v, ok := serialized.Data["IsCommunication"].(bool); ok {
+			evt.IsCommunication = v
+		}
+		if v, ok := serialized.Data["IsQuiet"].(bool); ok {
+			evt.IsQuiet = v
+		}
+		// Handle ExcludeUserIds array
+		if v, ok := serialized.Data["ExcludeUserIds"].([]interface{}); ok {
+			evt.ExcludeUserIds = make([]int, len(v))
+			for i, id := range v {
+				if idFloat, ok := id.(float64); ok {
+					evt.ExcludeUserIds[i] = int(idFloat)
+				}
+			}
+		}
+		return evt, nil
+
 		// Add more event types as needed
 	}
 

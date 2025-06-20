@@ -59,7 +59,17 @@ func IsZombieConnection(connectionId connections.ConnectionId) bool {
 }
 
 func RemoveZombieConnection(connectionId connections.ConnectionId) {
+	// Remove from zombie tracking
 	delete(userManager.ZombieConnections, connectionId)
+
+	// Also remove from the main connections map to prevent stale entries
+	if userId, ok := userManager.Connections[connectionId]; ok {
+		delete(userManager.Connections, connectionId)
+		// Also remove the reverse mapping if it matches this connection
+		if currentConnId, ok := userManager.UserConnections[userId]; ok && currentConnId == connectionId {
+			delete(userManager.UserConnections, userId)
+		}
+	}
 }
 
 // Returns a slice of userId's
@@ -198,7 +208,7 @@ func LoginUser(user *UserRecord, connectionId connections.ConnectionId) (*UserRe
 
 				mudlog.Info("LoginUser()", "Zombie", true)
 
-				if zombieUser, ok := userManager.Users[user.UserId]; ok {
+				if zombieUser, ok := userManager.Users[userId]; ok {
 					user = zombieUser
 				}
 

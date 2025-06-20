@@ -602,5 +602,4 @@ func lookRoom(user *users.UserRecord, roomId int, secretLook bool) {
 
 	textOut, _ = templates.Process("descriptions/exits", details, user.UserId)
 	user.SendText(textOut)
-
 }

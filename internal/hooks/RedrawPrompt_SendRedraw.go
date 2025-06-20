@@ -38,6 +38,11 @@ func RedrawPrompt_SendRedraw(e events.Event) events.ListenerReturn {
 		pTxt := templates.AnsiParse(newCmdPrompt)
 		connections.SendTo([]byte(pTxt), user.ConnectionId())
 
+		// Clear copyover recovery flag after first prompt
+		if user.GetConfigOption("copyover_recovery") == "true" {
+			user.SetConfigOption("copyover_recovery", "")
+		}
+
 	}
 
 	return events.Continue

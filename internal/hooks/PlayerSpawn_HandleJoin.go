@@ -48,8 +48,7 @@ func HandleJoin(e events.Event) events.ListenerReturn {
 	// Check if this is a copyover recovery
 	isCopyoverRecovery := user.GetConfigOption("copyover_recovery") == "true"
 	if isCopyoverRecovery {
-		// Clear the flag
-		user.SetConfigOption("copyover_recovery", "")
+		// Don't clear the flag yet - we need it for prompt handling
 		mudlog.Info("HandleJoin", "info", "Skipping OnLoginCommands for copyover recovery", "userId", evt.UserId)
 	} else {
 		// Execute OnLoginCommands only for normal logins

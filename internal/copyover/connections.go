@@ -63,8 +63,9 @@ func RegisterConnectionGatherers(listeners map[string]net.Listener) {
 				continue
 			}
 
-			// Clear close-on-exec flag - file descriptors should be preserved
-			// Note: On some systems we'd clear FD_CLOEXEC, but Go's cmd.ExtraFiles handles this
+			// IMPORTANT: When we call File() on a listener, it creates a duplicate FD
+			// The original listener should NOT be closed until after exec, as it's still
+			// being used to accept connections. The duplicate FD will be passed to the child.
 
 			listenerStates[name] = ListenerState{
 				Type:    "tcp",
@@ -241,10 +242,18 @@ func RecoverListeners(state *CopyoverState) map[string]net.Listener {
 			continue
 		}
 
+		// Log file descriptor details
+		if stat, err := file.Stat(); err == nil {
+			mudlog.Info("Copyover", "debug", "Recovered FD stat", "name", name, "fd", fdIndex, "mode", stat.Mode())
+		} else {
+			mudlog.Warn("Copyover", "warning", "Could not stat recovered FD", "name", name, "fd", fdIndex, "err", err)
+		}
+
 		// Convert to listener
 		listener, err := net.FileListener(file)
 		if err != nil {
 			mudlog.Error("Copyover", "error", "Failed to create listener from file", "name", name, "err", err)
+			// Only close the file if we failed to create the listener
 			if closeErr := file.Close(); closeErr != nil {
 				mudlog.Error("Copyover", "error", "Failed to close file", "name", name, "err", closeErr)
 			}
@@ -252,8 +261,33 @@ func RecoverListeners(state *CopyoverState) map[string]net.Listener {
 			continue
 		}
 
+		// IMPORTANT: Do NOT close the file after successful conversion to listener
+		// The listener now owns the file descriptor
+
+		// Test the listener is valid
+		if listener.Addr() == nil {
+			mudlog.Error("Copyover", "error", "Recovered listener has nil address", "name", name)
+			fdIndex++
+			continue
+		}
+
+		// Test if we can actually accept on this listener by trying to set a deadline
+		// This is a non-blocking way to check if the listener is functional
+		if tcpListener, ok := listener.(*net.TCPListener); ok {
+			// Try to set a deadline - this will fail if the listener is invalid
+			testDeadline := time.Now().Add(1 * time.Second)
+			if err := tcpListener.SetDeadline(testDeadline); err != nil {
+				mudlog.Error("Copyover", "error", "Recovered listener failed deadline test", "name", name, "err", err)
+				// Don't continue, try to use it anyway
+			} else {
+				// Clear the deadline
+				tcpListener.SetDeadline(time.Time{})
+				mudlog.Info("Copyover", "debug", "Listener passed deadline test", "name", name)
+			}
+		}
+
 		recovered[name] = listener
-		mudlog.Info("Copyover", "success", "Recovered listener", "name", name, "address", listenerState.Address)
+		mudlog.Info("Copyover", "success", "Recovered listener", "name", name, "address", listener.Addr().String(), "expected", listenerState.Address)
 		fdIndex++
 	}
 
@@ -314,6 +348,12 @@ func RecoverConnections(state *CopyoverState) []*connections.ConnectionDetails {
 		cd.AddInputHandler("EchoInputHandler", inputhandlers.EchoInputHandler)
 		cd.AddInputHandler("HistoryInputHandler", inputhandlers.HistoryInputHandler)
 
+		// Add signal handler for Ctrl commands
+		cd.AddInputHandler("SignalHandler", inputhandlers.SignalHandler, "AnsiHandler")
+
+		// Set connection state to LoggedIn
+		cd.SetState(connections.LoggedIn)
+
 		// Associate the connection with the user
 		if connState.UserID > 0 {
 			// Get the user from the user manager
@@ -354,6 +394,11 @@ func RecoverConnections(state *CopyoverState) []*connections.ConnectionDetails {
 
 				// Mark this user as recovering from copyover
 				user.SetConfigOption("copyover_recovery", "true")
+
+				// Add admin command handler if user is admin
+				if user.Role == users.RoleAdmin {
+					cd.AddInputHandler("SystemCommandInputHandler", inputhandlers.SystemCommandInputHandler)
+				}
 
 				// Store the room ID in the state for later
 				if connState.RoomID == 0 && user.Character != nil {
@@ -426,8 +471,13 @@ func CompleteUserRecovery(worldEnterFunc func(userId int, roomId int)) []*connec
 		if user.Character.RoomId > 0 {
 			mudlog.Info("Copyover", "info", "Sending user back to world", "userId", user.UserId, "username", user.Username, "roomId", user.Character.RoomId)
 			worldEnterFunc(user.UserId, user.Character.RoomId)
+
+			// Don't clear the flag here - let it be cleared after the first prompt is drawn
 		}
 	}
+
+	// Clear the recovery state now that all users are back in the world
+	manager.ClearRecoveryState()
 
 	// Return the recovered connections that need input handlers
 	return manager.GetRecoveredConnections()
