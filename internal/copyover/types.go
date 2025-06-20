@@ -9,6 +9,7 @@ type CopyoverState struct {
 	// Version information
 	Version   string    `json:"version"`
 	Timestamp time.Time `json:"timestamp"`
+	StartTime time.Time `json:"start_time"` // When copyover started
 
 	// Environment preservation
 	Environment map[string]string `json:"environment"`

@@ -7,7 +7,6 @@ import (
 
 	"github.com/GoMudEngine/GoMud/internal/copyover"
 	"github.com/GoMudEngine/GoMud/internal/events"
-	"github.com/GoMudEngine/GoMud/internal/mudlog"
 	"github.com/GoMudEngine/GoMud/internal/rooms"
 	"github.com/GoMudEngine/GoMud/internal/users"
 )
@@ -134,14 +133,13 @@ During copyover:
 		status.InitiatedBy = user.UserId
 		status.Reason = "Manual copyover by admin"
 
-		result, err := mgr.InitiateCopyover(0)
-		if err != nil {
-			user.SendText(fmt.Sprintf("<ansi fg=\"red\">Copyover failed: %s</ansi>", err))
-			return true, err
-		}
-
-		// We shouldn't reach here if copyover succeeds
-		user.SendText(fmt.Sprintf("<ansi fg=\"red\">Copyover failed: %s</ansi>", result.Error))
+		// Queue a system event to perform copyover outside of event processing
+		events.AddToQueue(events.System{
+			Command: "copyover",
+			Data: map[string]interface{}{
+				"countdown": 0,
+			},
+		})
 
 	default:
 		// Try to parse as countdown seconds
@@ -167,17 +165,14 @@ During copyover:
 		status.InitiatedBy = user.UserId
 		status.Reason = "Scheduled copyover by admin"
 
-		// Start copyover with countdown
-		go func() {
-			result, err := mgr.InitiateCopyover(countdown)
-			if err != nil {
-				// Log the error since we can't send to user after goroutine
-				mudlog.Error("Copyover", "error", "Failed to initiate copyover", "err", err)
-			}
-			if result != nil && !result.Success {
-				mudlog.Error("Copyover", "error", "Copyover failed", "reason", result.Error)
-			}
-		}()
+		// Queue a system event to perform copyover outside of event processing
+		// The countdown will be handled by the copyover manager
+		events.AddToQueue(events.System{
+			Command: "copyover",
+			Data: map[string]interface{}{
+				"countdown": countdown,
+			},
+		})
 	}
 
 	return true, nil

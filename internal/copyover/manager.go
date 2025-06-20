@@ -15,6 +15,7 @@ import (
 	"github.com/GoMudEngine/GoMud/internal/mudlog"
 	"github.com/GoMudEngine/GoMud/internal/templates"
 	"github.com/GoMudEngine/GoMud/internal/users"
+	"github.com/GoMudEngine/GoMud/internal/util"
 )
 
 const (
@@ -194,8 +195,19 @@ func ClearRecoveryState() {
 	mudlog.Info("Copyover", "status", "Recovery state cleared")
 }
 
-// InitiateCopyover starts the copyover process
+// InitiateCopyoverWithBuild starts the copyover process including build phase
+func (m *Manager) InitiateCopyoverWithBuild(countdown int) (*CopyoverResult, error) {
+	// This is the original InitiateCopyover that includes building
+	return m.initiateCopyoverInternal(countdown, true)
+}
+
+// InitiateCopyover starts the copyover process (assumes executable is already built)
 func (m *Manager) InitiateCopyover(countdown int) (*CopyoverResult, error) {
+	return m.initiateCopyoverInternal(countdown, false)
+}
+
+// initiateCopyoverInternal is the internal implementation
+func (m *Manager) initiateCopyoverInternal(countdown int, includeBuild bool) (*CopyoverResult, error) {
 	// Check if we can start
 	canStart, reasons := m.status.CanCopyover()
 	if !canStart {
@@ -284,26 +296,43 @@ func (m *Manager) InitiateCopyover(countdown int) (*CopyoverResult, error) {
 		}
 	}
 
-	// First, build the new executable
-	m.announceTemplate("copyover/copyover-building", nil)
-	mudlog.Info("Copyover", "status", "Building new executable")
+	// Build phase (if requested)
+	if includeBuild {
+		// First, build the new executable
+		m.announceTemplate("copyover/copyover-building", nil)
+		mudlog.Info("Copyover", "status", "Building new executable")
 
-	m.updateProgress("build", 0)
-	if err := m.buildExecutable(); err != nil {
-		m.announceTemplate("copyover/copyover-build-failed", nil)
-		result.Error = fmt.Sprintf("failed to build: %v", err)
-		m.changeState(StateFailed)
-		return result, err
+		m.updateProgress("build", 0)
+		if err := m.BuildExecutable(); err != nil {
+			m.announceTemplate("copyover/copyover-build-failed", nil)
+			result.Error = fmt.Sprintf("failed to build: %v", err)
+			m.changeState(StateFailed)
+			return result, err
+		}
+		m.updateProgress("build", 100)
+
+		mudlog.Info("Copyover", "status", "Build successful")
+		m.announceTemplate("copyover/copyover-build-complete", nil)
 	}
-	m.updateProgress("build", 100)
-
-	mudlog.Info("Copyover", "status", "Build successful")
-	m.announceTemplate("copyover/copyover-build-complete", nil)
 
 	// Transition to saving state
 	if err := m.changeState(StateSaving); err != nil {
 		return nil, err
 	}
+
+	// Lock the MUD to ensure no state changes during copyover
+	// This lock will be released by process termination on successful exec
+	mudlog.Info("Copyover", "status", "Acquiring global mutex")
+	util.LockMud()
+	execSuccess := false
+	defer func() {
+		if !execSuccess {
+			// Only unlock if we didn't successfully exec
+			mudlog.Info("Copyover", "status", "Releasing global mutex (exec failed)")
+			util.UnlockMud()
+		}
+		// Note: If exec succeeds, the lock is released by process termination
+	}()
 
 	// Prepare modules for copyover (currently only used by auctions module)
 	if err := PrepareModulesForCopyover(); err != nil {
@@ -314,10 +343,12 @@ func (m *Manager) InitiateCopyover(countdown int) (*CopyoverResult, error) {
 	// Save all active users before gathering state
 	m.announceTemplate("copyover/copyover-saving", nil)
 	m.updateProgress("save", 0)
+	saveStart := time.Now()
 	if err := m.saveAllUsers(); err != nil {
 		mudlog.Error("Copyover", "error", "Failed to save some users", "err", err)
 		// Continue anyway - better to copyover with some users not saved than to fail
 	}
+	util.TrackTime("copyover.save_users", time.Since(saveStart).Seconds())
 	m.updateProgress("save", 100)
 
 	// Transition to gathering state
@@ -329,19 +360,23 @@ func (m *Manager) InitiateCopyover(countdown int) (*CopyoverResult, error) {
 	m.updateProgress("gather", 0)
 
 	// Gather current state
+	gatherStart := time.Now()
 	state, err := m.gatherState()
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to gather state: %v", err)
 		m.changeState(StateFailed)
 		return result, err
 	}
+	util.TrackTime("copyover.gather_state", time.Since(gatherStart).Seconds())
 	m.updateProgress("gather", 100)
 
 	// Save state to file
+	saveStateStart := time.Now()
 	if err := m.saveState(state); err != nil {
 		result.Error = fmt.Sprintf("failed to save state: %v", err)
 		return result, err
 	}
+	util.TrackTime("copyover.save_state", time.Since(saveStateStart).Seconds())
 
 	// Prepare file descriptors
 	extraFiles, err := m.prepareFileDescriptors(state)
@@ -360,13 +395,17 @@ func (m *Manager) InitiateCopyover(countdown int) (*CopyoverResult, error) {
 	}
 
 	// Execute new process
+	// Mark exec as successful before the call (since exec doesn't return on success)
+	execSuccess = true
 	if err := m.executeNewProcess(extraFiles); err != nil {
+		execSuccess = false
 		result.Error = fmt.Sprintf("failed to execute: %v", err)
 		m.changeState(StateFailed)
 		return result, err
 	}
 
 	// If we get here, exec failed (shouldn't happen)
+	execSuccess = false
 	result.Error = "exec returned unexpectedly"
 	return result, fmt.Errorf("exec returned unexpectedly")
 }
@@ -374,6 +413,20 @@ func (m *Manager) InitiateCopyover(countdown int) (*CopyoverResult, error) {
 // RecoverFromCopyover restores state after a copyover
 func (m *Manager) RecoverFromCopyover() error {
 	mudlog.Info("Copyover", "status", "Starting recovery")
+
+	// Lock the MUD immediately to ensure atomic recovery
+	mudlog.Info("Copyover", "status", "Acquiring global mutex for recovery")
+	util.LockMud()
+	defer func() {
+		mudlog.Info("Copyover", "status", "Releasing global mutex after recovery")
+		util.UnlockMud()
+	}()
+
+	// Track total recovery time
+	recoveryStart := time.Now()
+	defer func() {
+		util.TrackTime("copyover.recovery", time.Since(recoveryStart).Seconds())
+	}()
 
 	// Check if we're already in recovering state (from init)
 	if m.currentState != StateRecovering {
@@ -468,6 +521,7 @@ func (m *Manager) gatherState() (*CopyoverState, error) {
 	m.state = &CopyoverState{
 		Version:     "1.0",
 		Timestamp:   time.Now(),
+		StartTime:   m.startTime,
 		Environment: make(map[string]string),
 		Listeners:   make(map[string]ListenerState),
 		Connections: make([]ConnectionState, 0),
@@ -501,27 +555,51 @@ func (m *Manager) gatherState() (*CopyoverState, error) {
 
 // saveState writes state to disk
 func (m *Manager) saveState(state *CopyoverState) error {
+	// Track compression time
+	compressionStart := time.Now()
+
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	// Write to temp file first
-	tempFile := CopyoverDataFile + ".tmp"
-	if err := os.WriteFile(tempFile, data, 0600); err != nil {
-		return err
-	}
+	// Compress the state data
+	compressed := util.Compress(data)
+	util.TrackTime("copyover.compress", time.Since(compressionStart).Seconds())
 
-	// Atomic rename
-	return os.Rename(tempFile, CopyoverDataFile)
+	// Calculate compression ratio for logging
+	compressionRatio := float64(len(data)-len(compressed)) / float64(len(data)) * 100
+	mudlog.Info("Copyover", "compression", fmt.Sprintf("Compressed state from %d to %d bytes (%.1f%% reduction)",
+		len(data), len(compressed), compressionRatio))
+
+	// Use atomic save
+	return util.SafeSave(CopyoverDataFile, compressed)
 }
 
 // loadState reads state from disk
 func (m *Manager) loadState() (*CopyoverState, error) {
-	data, err := os.ReadFile(CopyoverDataFile)
+	// Track decompression time
+	decompressionStart := time.Now()
+
+	compressed, err := os.ReadFile(CopyoverDataFile)
 	if err != nil {
 		return nil, err
 	}
+
+	// Decompress the state data
+	data := util.Decompress(compressed)
+	util.TrackTime("copyover.decompress", time.Since(decompressionStart).Seconds())
+
+	// Check if decompression failed
+	if len(data) == 0 && len(compressed) > 0 {
+		// Decompression failed, try to read as uncompressed JSON for backwards compatibility
+		mudlog.Warn("Copyover", "decompression", "Failed to decompress, attempting to read as plain JSON")
+		data = compressed
+	}
+
+	// Log decompression stats
+	mudlog.Info("Copyover", "decompression", fmt.Sprintf("Decompressed state from %d to %d bytes",
+		len(compressed), len(data)))
 
 	var state CopyoverState
 	if err := json.Unmarshal(data, &state); err != nil {
@@ -553,8 +631,10 @@ func (m *Manager) prepareFileDescriptors(state *CopyoverState) ([]*os.File, erro
 	return m.extraFiles, nil
 }
 
-// buildExecutable builds the new server executable
-func (m *Manager) buildExecutable() error {
+// BuildExecutable builds the new server executable for copyover
+func (m *Manager) BuildExecutable() error {
+	// Don't announce here - let the caller handle announcements
+	mudlog.Info("Copyover", "status", "Building new executable")
 	// Get the current executable name
 	executableName := "WillowdaleMUD" // default
 	if len(os.Args) > 0 {
@@ -565,7 +645,12 @@ func (m *Manager) buildExecutable() error {
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 
-	return buildCmd.Run()
+	if err := buildCmd.Run(); err != nil {
+		return err
+	}
+
+	mudlog.Info("Copyover", "status", "Build successful")
+	return nil
 }
 
 // saveAllUsers saves all active users to disk

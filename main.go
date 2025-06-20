@@ -343,18 +343,23 @@ func main() {
 
 	mudlog.Info("Server Ready", "Time Taken", time.Since(serverStartTime))
 
-	// If we're recovering from copyover, complete user recovery now that the world is running
+	// If we're recovering from copyover, set pending recovery flag
 	if copyover.IsRecovering() {
-		// Give the workers time to fully start before recovering users
-		time.Sleep(2 * time.Second)
-		recoveredConnections := copyover.CompleteUserRecovery(worldManager.SendEnterWorld)
+		// Set the pending recovery flag - the world will complete recovery when ready
+		worldManager.SetPendingRecovery()
 
-		// Start input handlers for recovered connections
-		for _, connDetails := range recoveredConnections {
-			mudlog.Info("Starting input handler for recovered connection", "connectionId", connDetails.ConnectionId())
-			wg.Add(1)
-			go handleRecoveredConnection(connDetails, &wg)
-		}
+		// Start a goroutine to wait for recovery to complete
+		go func() {
+			// Wait for the recovered connections from the world
+			recoveredConnections := <-worldManager.GetRecoveredConnectionsChan()
+
+			// Start input handlers for recovered connections
+			for _, connDetails := range recoveredConnections {
+				mudlog.Info("Starting input handler for recovered connection", "connectionId", connDetails.ConnectionId())
+				wg.Add(1)
+				go handleRecoveredConnection(connDetails, &wg)
+			}
+		}()
 	}
 
 	// block until a signal comes in

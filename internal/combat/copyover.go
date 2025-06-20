@@ -205,19 +205,6 @@ func validateAggroTarget(char *characters.Character) error {
 	return nil
 }
 
-// PauseCombat temporarily halts all combat processing
-func PauseCombat() {
-	// This would be called before copyover begins
-	// Currently combat is processed automatically in rounds,
-	// so pausing would require a global flag
-}
-
-// ResumeCombat resumes normal combat processing
-func ResumeCombat() {
-	// This would be called after copyover completes
-	// Would clear any pause flags set by PauseCombat
-}
-
 const combatStateFile = "combat_copyover.dat"
 
 // SaveCombatStateForCopyover saves combat state to a file for copyover

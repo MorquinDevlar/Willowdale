@@ -421,8 +421,15 @@ func RecoverConnections(state *CopyoverState) []*connections.ConnectionDetails {
 		mudlog.Info("Copyover", "success", "Recovered connection", "userId", connState.UserID, "addr", connState.RemoteAddr)
 
 		// Send a message to let them know copyover completed
+		// Calculate duration if we have the start time
+		var duration time.Duration
+		if manager.state != nil && !manager.state.StartTime.IsZero() {
+			duration = time.Since(manager.state.StartTime)
+		}
+
 		tplData := map[string]interface{}{
 			"BuildNumber": GetBuildNumber(),
+			"Duration":    duration.Round(time.Millisecond).String(),
 		}
 		if tplText, err := templates.Process("copyover/copyover-post", tplData); err == nil {
 			// Parse ANSI tags before sending

@@ -12,6 +12,7 @@ import (
 	"github.com/GoMudEngine/GoMud/internal/badinputtracker"
 	"github.com/GoMudEngine/GoMud/internal/configs"
 	"github.com/GoMudEngine/GoMud/internal/connections"
+	"github.com/GoMudEngine/GoMud/internal/copyover"
 	"github.com/GoMudEngine/GoMud/internal/events"
 	"github.com/GoMudEngine/GoMud/internal/items"
 	"github.com/GoMudEngine/GoMud/internal/keywords"
@@ -50,6 +51,9 @@ type World struct {
 	eventRequeue          []events.Event
 	userInputEventTracker map[int]struct{}
 	mobInputEventTracker  map[int]struct{}
+	pendingCopyover       map[string]interface{}                // Set when copyover should be executed after event loop
+	pendingRecovery       bool                                  // Set when copyover recovery needs to complete
+	recoveredConnections  chan []*connections.ConnectionDetails // Channel to return recovered connections
 }
 
 func NewWorld(osSignalChan chan os.Signal) *World {
@@ -65,6 +69,7 @@ func NewWorld(osSignalChan chan os.Signal) *World {
 		eventRequeue:          []events.Event{},
 		userInputEventTracker: map[int]struct{}{},
 		mobInputEventTracker:  map[int]struct{}{},
+		recoveredConnections:  make(chan []*connections.ConnectionDetails, 1),
 	}
 
 	// System commands
@@ -235,6 +240,12 @@ func (w *World) HandleSystemEvents(e events.Event) events.ListenerReturn {
 
 		}
 
+	} else if sys.Command == `copyover` {
+		// Mark that copyover should be executed after event processing
+		// This will be handled in the main loop after releasing the mutex
+		if copyoverData, ok := sys.Data.(map[string]interface{}); ok {
+			w.pendingCopyover = copyoverData
+		}
 	}
 
 	return events.Continue
@@ -264,6 +275,16 @@ func (w *World) SendSetZombie(userId int, on bool) {
 	} else {
 		w.zombieFlag <- [2]int{userId, 0}
 	}
+}
+
+// SetPendingRecovery marks that copyover recovery needs to complete
+func (w *World) SetPendingRecovery() {
+	w.pendingRecovery = true
+}
+
+// GetRecoveredConnectionsChan returns the channel for receiving recovered connections
+func (w *World) GetRecoveredConnectionsChan() <-chan []*connections.ConnectionDetails {
+	return w.recoveredConnections
 }
 
 func (w *World) logOutUserByConnectionId(connectionId connections.ConnectionId) {
@@ -788,6 +809,113 @@ loop:
 			util.LockMud()
 			w.EventLoop()
 			util.UnlockMud()
+
+			// Check if we need to complete copyover recovery
+			if w.pendingRecovery {
+				w.pendingRecovery = false
+				mudlog.Info("MainWorker", "action", "completing copyover recovery")
+
+				// The system is now ready - complete the recovery
+				// We do this in a goroutine to avoid blocking the event loop
+				go func() {
+					recoveredConnections := copyover.CompleteUserRecovery(w.SendEnterWorld)
+
+					// Send the recovered connections through the channel
+					// This allows main.go to handle starting the input handlers
+					w.recoveredConnections <- recoveredConnections
+				}()
+			}
+
+			// Check if copyover was requested
+			if w.pendingCopyover != nil {
+				mudlog.Info("MainWorker", "action", "executing pending copyover")
+				// Execute copyover outside of the mutex lock
+				mgr := copyover.GetManager()
+				countdown := 0
+				if val, ok := w.pendingCopyover["countdown"].(int); ok {
+					countdown = val
+				}
+
+				// Clear pending copyover
+				w.pendingCopyover = nil
+
+				// For immediate copyover (countdown=0), we need to send announcements directly
+				// since InitiateCopyover won't do the countdown sequence
+				if countdown == 0 {
+					// Send announcements directly to all connections instead of through event queue
+					// This ensures they're sent before the copyover happens
+
+					// Announce message
+					tplData := map[string]interface{}{
+						"Seconds": 0,
+					}
+					if tplText, err := templates.Process("copyover/copyover-announce", tplData); err == nil {
+						connections.Broadcast([]byte(templates.AnsiParse(tplText) + "\r\n"))
+					}
+
+					// Building message
+					if tplText, err := templates.Process("copyover/copyover-building", nil); err == nil {
+						connections.Broadcast([]byte(templates.AnsiParse(tplText) + "\r\n"))
+					}
+				}
+
+				// Build the executable first (without holding the mutex)
+				// This happens while the game continues running normally
+				mudlog.Info("MainWorker", "action", "building executable before copyover")
+				if err := mgr.BuildExecutable(); err != nil {
+					mudlog.Error("MainWorker", "error", "build failed", "err", err)
+					// Use the template for build failure
+					if countdown == 0 {
+						// Send directly for immediate copyover
+						if tplText, err := templates.Process("copyover/copyover-build-failed", nil); err == nil {
+							connections.Broadcast([]byte(templates.AnsiParse(tplText) + "\r\n"))
+						} else {
+							// Fallback message
+							connections.Broadcast([]byte(templates.AnsiParse("<ansi fg=\"red-bold\">=== BUILD FAILED - COPYOVER CANCELLED ===</ansi>\r\n")))
+						}
+					} else {
+						// Use event queue for countdown copyover
+						if tplText, err := templates.Process("copyover/copyover-build-failed", nil); err == nil {
+							events.AddToQueue(events.Broadcast{
+								Text: templates.AnsiParse(tplText),
+							})
+						} else {
+							// Fallback message
+							events.AddToQueue(events.Broadcast{
+								Text: templates.AnsiParse("<ansi fg=\"red-bold\">=== BUILD FAILED - COPYOVER CANCELLED ===</ansi>"),
+							})
+						}
+					}
+				} else {
+					// For immediate copyover, send build complete and pre-copyover messages
+					if countdown == 0 {
+						if tplText, err := templates.Process("copyover/copyover-build-complete", nil); err == nil {
+							connections.Broadcast([]byte(templates.AnsiParse(tplText) + "\r\n"))
+						}
+
+						// Now send the pre-copyover message
+						if tplText, err := templates.Process("copyover/copyover-pre", nil); err == nil {
+							connections.Broadcast([]byte(templates.AnsiParse(tplText) + "\r\n"))
+						}
+					}
+
+					// Build succeeded, now do the actual copyover
+					// The manager will handle the remaining messages (saving, restarting)
+					result, err := mgr.InitiateCopyover(countdown)
+					if err != nil {
+						mudlog.Error("MainWorker", "error", "copyover failed", "err", err)
+						events.AddToQueue(events.Broadcast{
+							Text: fmt.Sprintf("<ansi fg=\"red-bold\">=== COPYOVER FAILED: %s ===</ansi>", err.Error()),
+						})
+					} else if result != nil && !result.Success {
+						mudlog.Error("MainWorker", "error", "copyover failed", "reason", result.Error)
+						events.AddToQueue(events.Broadcast{
+							Text: fmt.Sprintf("<ansi fg=\"red-bold\">=== COPYOVER FAILED: %s ===</ansi>", result.Error),
+						})
+					}
+					// If copyover succeeds, we won't reach here
+				}
+			}
 
 		case <-turnTimer.C:
 
