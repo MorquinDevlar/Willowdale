@@ -4,8 +4,8 @@ import (
 	"time"
 )
 
-// CopyoverState represents the complete state to be preserved during copyover
-type CopyoverState struct {
+// CopyoverStateData represents the complete state to be preserved during copyover
+type CopyoverStateData struct {
 	// Version information
 	Version   string    `json:"version"`
 	Timestamp time.Time `json:"timestamp"`

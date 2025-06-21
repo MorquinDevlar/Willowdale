@@ -26,6 +26,7 @@ Usage:
   <ansi fg="command">copyover test</ansi>    - Test copyover readiness
   <ansi fg="command">copyover status</ansi>  - Show copyover status and history
   <ansi fg="command">copyover cancel</ansi>  - Cancel a pending copyover
+  <ansi fg="command">copyover reset</ansi>   - Reset stuck copyover state (use with caution!)
 
 During copyover:
 - All player connections are preserved
@@ -64,12 +65,22 @@ During copyover:
 		}
 		user.SendText("<ansi fg=\"green\">Copyover cancelled.</ansi>")
 
+	case "reset":
+		// Reset stuck copyover state
+		user.SendText("<ansi fg=\"yellow\">Resetting copyover state...</ansi>")
+		if err := mgr.Reset(); err != nil {
+			user.SendText(fmt.Sprintf("<ansi fg=\"red\">Reset failed: %s</ansi>", err))
+			return true, nil
+		}
+		user.SendText("<ansi fg=\"green\">Copyover state has been reset.</ansi>")
+		user.SendText("<ansi fg=\"yellow\">Note: This should only be used if the copyover system is stuck.</ansi>")
+
 	case "status":
 		// Show copyover status
-		status := mgr.GetStatus()
+		status := mgr.GetStatusStruct()
 
 		user.SendText("<ansi fg=\"cyan-bold\">═══ Copyover Status ═══</ansi>")
-		user.SendText(fmt.Sprintf("State: <ansi fg=\"yellow\">%s</ansi>", status.State))
+		user.SendText(fmt.Sprintf("State: <ansi fg=\"yellow\">%v</ansi>", status.State))
 
 		if status.State.IsActive() {
 			user.SendText(fmt.Sprintf("Progress: <ansi fg=\"green\">%d%%</ansi>", status.GetProgress()))
@@ -128,12 +139,8 @@ During copyover:
 		// Immediate copyover
 		user.SendText("<ansi fg=\"yellow-bold\">Initiating immediate copyover...</ansi>")
 
-		// Set initiator
-		status := mgr.GetStatus()
-		status.InitiatedBy = user.UserId
-		status.Reason = "Manual copyover by admin"
-
-		// Queue a system event to perform copyover outside of event processing
+		// Queue the copyover to be executed after this command completes
+		// This avoids the mutex deadlock since commands run inside the mutex
 		events.AddToQueue(events.System{
 			Command: "copyover",
 			Data: map[string]interface{}{
@@ -160,13 +167,8 @@ During copyover:
 
 		user.SendText(fmt.Sprintf("<ansi fg=\"yellow-bold\">Initiating copyover in %d seconds...</ansi>", countdown))
 
-		// Set initiator
-		status := mgr.GetStatus()
-		status.InitiatedBy = user.UserId
-		status.Reason = "Scheduled copyover by admin"
-
-		// Queue a system event to perform copyover outside of event processing
-		// The countdown will be handled by the copyover manager
+		// Queue the copyover to be executed after this command completes
+		// This avoids the mutex deadlock since commands run inside the mutex
 		events.AddToQueue(events.System{
 			Command: "copyover",
 			Data: map[string]interface{}{

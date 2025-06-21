@@ -78,8 +78,17 @@ func RegisterConnectionGatherers(listeners map[string]net.Listener) {
 			fdIndex++
 		}
 
-		// Update manager state
-		manager.state.Listeners = listenerStates
+		// Store listener states for later
+		if manager.preservedState == nil {
+			manager.preservedState = &CopyoverStateData{
+				Version:     "1.0",
+				Timestamp:   time.Now(),
+				Environment: make(map[string]string),
+				Listeners:   make(map[string]ListenerState),
+				Connections: make([]ConnectionState, 0),
+			}
+		}
+		manager.preservedState.Listeners = listenerStates
 
 		// Log what we're storing
 		mudlog.Info("Copyover", "debug", "Stored listeners in state", "count", len(listenerStates))
@@ -167,8 +176,17 @@ func RegisterConnectionGatherers(listeners map[string]net.Listener) {
 			connStates = append(connStates, connState)
 		}
 
-		// Update manager state
-		manager.state.Connections = connStates
+		// Store connection states for later
+		if manager.preservedState == nil {
+			manager.preservedState = &CopyoverStateData{
+				Version:     "1.0",
+				Timestamp:   time.Now(),
+				Environment: make(map[string]string),
+				Listeners:   make(map[string]ListenerState),
+				Connections: make([]ConnectionState, 0),
+			}
+		}
+		manager.preservedState.Connections = connStates
 		return connStates, nil
 	})
 }
@@ -178,7 +196,7 @@ func RegisterConnectionRestorers() {
 	manager := GetManager()
 
 	// Restore listeners
-	manager.RegisterStateRestorer(func(state *CopyoverState) error {
+	manager.RegisterStateRestorer(func(state *CopyoverStateData) error {
 		// Listeners are restored in main.go before starting the server
 		// This is just for logging
 		for name, listener := range state.Listeners {
@@ -188,20 +206,20 @@ func RegisterConnectionRestorers() {
 	})
 
 	// Restore connections
-	manager.RegisterStateRestorer(func(state *CopyoverState) error {
+	manager.RegisterStateRestorer(func(state *CopyoverStateData) error {
 		// Connections need to be restored after the server is running
 		// This is handled in the recovery process
 		mudlog.Info("Copyover", "info", "Connections to restore", "count", len(state.Connections))
 
 		// Store the state for later recovery
-		manager.state = state
+		manager.preservedState = state
 
 		return nil
 	})
 }
 
 // RecoverListeners recovers listener FDs from the copyover state
-func RecoverListeners(state *CopyoverState) map[string]net.Listener {
+func RecoverListeners(state *CopyoverStateData) map[string]net.Listener {
 	if state == nil || len(state.Listeners) == 0 {
 		mudlog.Info("Copyover", "info", "No listeners to recover")
 		return nil
@@ -295,7 +313,7 @@ func RecoverListeners(state *CopyoverState) map[string]net.Listener {
 }
 
 // RecoverConnections recovers connection FDs from the copyover state
-func RecoverConnections(state *CopyoverState) []*connections.ConnectionDetails {
+func RecoverConnections(state *CopyoverStateData) []*connections.ConnectionDetails {
 	mudlog.Info("Copyover", "info", "Starting connection recovery", "count", len(state.Connections))
 
 	var recoveredConnections []*connections.ConnectionDetails
@@ -423,8 +441,8 @@ func RecoverConnections(state *CopyoverState) []*connections.ConnectionDetails {
 		// Send a message to let them know copyover completed
 		// Calculate duration if we have the start time
 		var duration time.Duration
-		if manager.state != nil && !manager.state.StartTime.IsZero() {
-			duration = time.Since(manager.state.StartTime)
+		if manager.preservedState != nil && !manager.preservedState.StartTime.IsZero() {
+			duration = time.Since(manager.preservedState.StartTime)
 		}
 
 		tplData := map[string]interface{}{
@@ -456,9 +474,9 @@ func CompleteUserRecovery(worldEnterFunc func(userId int, roomId int)) []*connec
 	mudlog.Info("Copyover", "info", "Completing user recovery")
 
 	// First recover the connections
-	if manager.state != nil {
+	if manager.preservedState != nil {
 		mudlog.Info("Copyover", "info", "Recovering connections first")
-		RecoverConnections(manager.state)
+		RecoverConnections(manager.preservedState)
 
 		// Give connections a moment to settle
 		time.Sleep(100 * time.Millisecond)

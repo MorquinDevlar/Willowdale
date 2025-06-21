@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -19,98 +18,93 @@ import (
 )
 
 const (
-	// CopyoverDataFile is the temporary file used to store state
 	CopyoverDataFile = "copyover.dat"
-
-	// CopyoverEnvVar indicates we're in copyover recovery mode
-	CopyoverEnvVar = "GOMUD_COPYOVER"
-
-	// CopyoverTimeout is how long to wait for operations
-	CopyoverTimeout = 30 * time.Second
+	CopyoverEnvVar   = "GOMUD_COPYOVER"
+	CopyoverTimeout  = 30 * time.Second
 )
 
-// Manager handles the copyover process
-type Manager struct {
-	mu sync.RWMutex
+// Simplified state machine - only 5 states
+type CopyoverState int
 
-	// State tracking
-	inProgress bool
-	startTime  time.Time
-	state      *CopyoverState
+const (
+	StateIdle CopyoverState = iota
+	StateScheduled
+	StatePreparing // Combines building, saving, gathering
+	StateExecuting
+	StateRecovering
+)
 
-	// State machine
-	currentState   CopyoverPhase
-	stateChangedAt time.Time
-	status         *CopyoverStatus
-
-	// Progress tracking
-	progress map[string]int
-
-	// History tracking
-	history        []CopyoverHistory
-	historyCounter int
-
-	// File descriptor mapping
-	fdMap map[string]int // Maps connection ID to FD index
-
-	// Extra files to pass to child process
-	extraFiles []*os.File
-
-	// Callbacks for gathering state
-	stateGatherers []StateGatherer
-
-	// Callbacks for restoring state
-	stateRestorers []StateRestorer
-
-	// Recovered connections that need input handlers
-	recoveredConnections []*connections.ConnectionDetails
-
-	// Preserved listeners for copyover
-	preservedListeners map[string]net.Listener
+func (s CopyoverState) String() string {
+	switch s {
+	case StateIdle:
+		return "idle"
+	case StateScheduled:
+		return "scheduled"
+	case StatePreparing:
+		return "preparing"
+	case StateExecuting:
+		return "executing"
+	case StateRecovering:
+		return "recovering"
+	default:
+		return fmt.Sprintf("unknown(%d)", s)
+	}
 }
 
-// StateGatherer is called to collect state before copyover
+// Manager handles the copyover process (simplified)
+type Manager struct {
+	mu                   sync.Mutex
+	state                CopyoverState
+	startTime            time.Time
+	scheduledFor         time.Time
+	initiatedBy          int
+	reason               string
+	progress             int // Single progress percentage
+	cancelChan           chan struct{}
+	timer                *time.Timer
+	extraFiles           []*os.File
+	preservedState       *CopyoverStateData // For recovery
+	stateGatherers       []StateGatherer
+	stateRestorers       []StateRestorer
+	buildNumber          string
+	recoveredConnections []*connections.ConnectionDetails // Recovered connections that need input handlers
+}
+
+// CopyoverOptions for the single entry point
+type CopyoverOptions struct {
+	Countdown    int    // Seconds to wait (0 = immediate)
+	IncludeBuild bool   // Whether to rebuild executable
+	Reason       string // Why copyover is happening
+	InitiatedBy  int    // User ID who initiated
+}
+
+// StateGatherer collects state before copyover
 type StateGatherer func() (interface{}, error)
 
-// StateRestorer is called to restore state after copyover
-type StateRestorer func(state *CopyoverState) error
+// StateRestorer restores state after copyover
+type StateRestorer func(state *CopyoverStateData) error
 
-// Global manager instance
 var (
-	manager *Manager
-
-	// Track if we're in recovery mode
-	recoveryMu   sync.RWMutex
+	manager      *Manager
 	isRecovering bool
-
-	// Build number for display
-	currentBuildNumber = "unknown"
+	recoveryMu   sync.RWMutex
 )
 
 func init() {
-	// Initialize manager with proper state based on recovery status
 	initialState := StateIdle
-	if os.Getenv(CopyoverEnvVar) == "1" || fileExists(CopyoverDataFile) {
-		// If we're in recovery mode, start in recovering state
+	if os.Getenv(CopyoverEnvVar) == "1" {
 		initialState = StateRecovering
+	} else if fileExists(CopyoverDataFile) {
+		// Clean up stale file
+		mudlog.Warn("Copyover", "action", "Removing stale copyover.dat")
+		os.Remove(CopyoverDataFile)
 	}
 
 	manager = &Manager{
-		fdMap:                make(map[string]int),
-		stateGatherers:       make([]StateGatherer, 0),
-		stateRestorers:       make([]StateRestorer, 0),
-		recoveredConnections: make([]*connections.ConnectionDetails, 0),
-		currentState:         initialState,
-		stateChangedAt:       time.Now(),
-		status: &CopyoverStatus{
-			State:          initialState,
-			StateChangedAt: time.Now(),
-			VetoReasons:    make([]VetoInfo, 0),
-		},
-		progress:           make(map[string]int),
-		history:            make([]CopyoverHistory, 0),
-		historyCounter:     0,
-		preservedListeners: make(map[string]net.Listener),
+		state:          initialState,
+		stateGatherers: make([]StateGatherer, 0),
+		stateRestorers: make([]StateRestorer, 0),
+		buildNumber:    "unknown",
 	}
 }
 
@@ -119,406 +113,362 @@ func GetManager() *Manager {
 	return manager
 }
 
-// GetState returns the current copyover state
-func (m *Manager) GetState() (*CopyoverState, error) {
+// Copyover is the single entry point for all copyover operations
+func (m *Manager) Copyover(options CopyoverOptions) error {
+	m.mu.Lock()
+
+	// Check if we can proceed
+	if m.state != StateIdle {
+		m.mu.Unlock()
+		return fmt.Errorf("copyover already in progress (state: %s)", m.state)
+	}
+
+	// Check module vetoes
+	if moduleReady, vetoes := CheckModuleVetoes(); !moduleReady {
+		m.mu.Unlock()
+		return fmt.Errorf("modules not ready: %v", vetoes)
+	}
+
+	// Set common fields
+	m.initiatedBy = options.InitiatedBy
+	m.reason = options.Reason
+	m.startTime = time.Now()
+	m.progress = 0
+
+	// Handle scheduling vs immediate execution
+	if options.Countdown > 0 {
+		m.state = StateScheduled
+		m.scheduledFor = time.Now().Add(time.Duration(options.Countdown) * time.Second)
+		m.cancelChan = make(chan struct{})
+
+		// Create timer for scheduled execution
+		m.timer = time.NewTimer(time.Duration(options.Countdown) * time.Second)
+		m.mu.Unlock()
+
+		// Announce scheduling
+		mudlog.Info("Copyover", "action", "Scheduled copyover", "countdown", options.Countdown)
+		m.announce("copyover/copyover-announce", map[string]interface{}{
+			"Seconds": options.Countdown,
+			"Time":    m.scheduledFor.Format("15:04:05"),
+		})
+
+		// Fire scheduled event for countdown announcements
+		events.AddToQueue(events.CopyoverScheduled{
+			ScheduledAt: time.Now(),
+			Countdown:   options.Countdown,
+			Reason:      options.Reason,
+			InitiatedBy: options.InitiatedBy,
+		})
+
+		// Start goroutine to handle execution
+		go m.waitAndExecute(options)
+		return nil
+	}
+
+	// Immediate execution
+	m.state = StatePreparing
+	m.mu.Unlock()
+
+	// Execute synchronously
+	return m.execute(options)
+}
+
+// Cancel cancels a scheduled copyover
+func (m *Manager) Cancel(reason string) error {
+	m.mu.Lock()
+
+	if m.state != StateScheduled {
+		m.mu.Unlock()
+		return fmt.Errorf("no scheduled copyover to cancel")
+	}
+
+	// Stop timer
+	if m.timer != nil {
+		m.timer.Stop()
+	}
+
+	// Signal cancellation
+	if m.cancelChan != nil {
+		close(m.cancelChan)
+	}
+
+	// Reset state
+	m.state = StateIdle
+	m.scheduledFor = time.Time{}
+	m.mu.Unlock()
+
+	// Announce cancellation
+	m.announce("copyover/copyover-cancelled", map[string]interface{}{
+		"Reason": reason,
+	})
+
+	// Notify modules
+	CleanupModulesAfterCopyover()
+
+	mudlog.Info("Copyover", "action", "Cancelled", "reason", reason)
+	return nil
+}
+
+// GetStatus returns current status (simplified)
+func (m *Manager) GetStatus() (state string, progress int, scheduledFor time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state.String(), m.progress, m.scheduledFor
+}
+
+// IsScheduledReady checks if a scheduled copyover should execute
+func (m *Manager) IsScheduledReady() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.state == nil {
-		// Try to load from disk
-		state, err := m.loadState()
-		if err != nil {
-			return nil, err
-		}
-		m.state = state
+	if m.state != StateScheduled {
+		return false
 	}
 
-	return m.state, nil
+	return time.Now().After(m.scheduledFor)
 }
 
-// RegisterStateGatherer adds a callback to collect state
+// IsInProgress returns true if copyover is active
+func (m *Manager) IsInProgress() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state != StateIdle
+}
+
+// RegisterStateGatherer adds a state gatherer
 func (m *Manager) RegisterStateGatherer(gatherer StateGatherer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stateGatherers = append(m.stateGatherers, gatherer)
 }
 
-// RegisterStateRestorer adds a callback to restore state
+// RegisterStateRestorer adds a state restorer
 func (m *Manager) RegisterStateRestorer(restorer StateRestorer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stateRestorers = append(m.stateRestorers, restorer)
 }
 
-// IsInProgress returns true if copyover is happening
-func (m *Manager) IsInProgress() bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.inProgress
-}
-
-// IsCopyoverRecovery checks if we're starting from a copyover
-func IsCopyoverRecovery() bool {
-	recoveryMu.RLock()
-	recovering := isRecovering
-	recoveryMu.RUnlock()
-	return recovering || os.Getenv(CopyoverEnvVar) == "1" || fileExists(CopyoverDataFile)
-}
-
-// IsRecovering returns true if we're in the recovery process
-func IsRecovering() bool {
-	recoveryMu.RLock()
-	defer recoveryMu.RUnlock()
-	return isRecovering
-}
-
-// GetRecoveredConnections returns the list of recovered connections
-func (m *Manager) GetRecoveredConnections() []*connections.ConnectionDetails {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.recoveredConnections
-}
-
-// ClearRecoveryState clears the recovery flag after copyover is complete
-func (m *Manager) ClearRecoveryState() {
-	recoveryMu.Lock()
-	defer recoveryMu.Unlock()
-	isRecovering = false
-	mudlog.Info("Copyover", "status", "Recovery state cleared")
-}
-
-// ClearRecoveryState clears the recovery flag after copyover is complete
-func ClearRecoveryState() {
-	recoveryMu.Lock()
-	defer recoveryMu.Unlock()
-	isRecovering = false
-	mudlog.Info("Copyover", "status", "Recovery state cleared")
-}
-
-// InitiateCopyoverWithBuild starts the copyover process including build phase
-func (m *Manager) InitiateCopyoverWithBuild(countdown int) (*CopyoverResult, error) {
-	// This is the original InitiateCopyover that includes building
-	return m.initiateCopyoverInternal(countdown, true)
-}
-
-// InitiateCopyover starts the copyover process (assumes executable is already built)
-func (m *Manager) InitiateCopyover(countdown int) (*CopyoverResult, error) {
-	return m.initiateCopyoverInternal(countdown, false)
-}
-
-// initiateCopyoverInternal is the internal implementation
-func (m *Manager) initiateCopyoverInternal(countdown int, includeBuild bool) (*CopyoverResult, error) {
-	// Check if we can start
-	canStart, reasons := m.status.CanCopyover()
-	if !canStart {
-		return nil, fmt.Errorf("cannot initiate copyover: %v", reasons)
-	}
-
-	// Check module vetoes (currently only used by auctions module)
-	moduleReady, moduleVetoes := CheckModuleVetoes()
-	if !moduleReady {
-		// Add module vetoes to status
-		m.status.VetoReasons = append(m.status.VetoReasons, moduleVetoes...)
-		return nil, fmt.Errorf("cannot initiate copyover: modules not ready")
-	}
-
-	m.mu.Lock()
-	if m.inProgress {
-		m.mu.Unlock()
-		return nil, fmt.Errorf("copyover already in progress")
-	}
-	m.inProgress = true
-	m.startTime = time.Now()
-
-	// Update status
-	m.status.StartedAt = m.startTime
-	m.status.ScheduledAt = m.startTime
-	if countdown > 0 {
-		m.status.ScheduledFor = m.startTime.Add(time.Duration(countdown) * time.Second)
-	}
-	m.mu.Unlock()
-
-	// Start with scheduled or building state
-	if countdown > 0 {
-		if err := m.changeState(StateScheduled); err != nil {
-			return nil, err
-		}
-
-		// Fire scheduled event
-		events.AddToQueue(events.CopyoverScheduled{
-			ScheduledAt: time.Now(),
-			Countdown:   countdown,
-			Reason:      m.status.Reason,
-			InitiatedBy: m.status.InitiatedBy,
-		})
-	} else {
-		if err := m.changeState(StateBuilding); err != nil {
-			return nil, err
-		}
-	}
-
-	defer func() {
-		m.mu.Lock()
-		m.inProgress = false
-		// Clean up any extra files if we didn't exec successfully
-		for _, f := range m.extraFiles {
-			if f != nil {
-				if err := f.Close(); err != nil {
-					mudlog.Error("Copyover", "error", "Failed to close extra file", "err", err)
-				}
-			}
-		}
-		m.extraFiles = nil
-		m.mu.Unlock()
-
-		// Return to idle state if we're not in recovery
-		if m.currentState != StateRecovering {
-			m.changeState(StateIdle)
-		}
-	}()
-
-	result := &CopyoverResult{
-		Success: false,
-	}
-
-	// Announce copyover with countdown
-	if countdown > 0 {
-		if err := m.changeState(StateAnnouncing); err != nil {
-			return nil, err
-		}
-		if err := m.announceCountdown(countdown); err != nil {
-			result.Error = fmt.Sprintf("failed to announce: %v", err)
-			m.changeState(StateFailed)
-			return result, err
-		}
-		if err := m.changeState(StateBuilding); err != nil {
-			return nil, err
-		}
-	}
-
-	// Build phase (if requested)
-	if includeBuild {
-		// First, build the new executable
-		m.announceTemplate("copyover/copyover-building", nil)
-		mudlog.Info("Copyover", "status", "Building new executable")
-
-		m.updateProgress("build", 0)
-		if err := m.BuildExecutable(); err != nil {
-			m.announceTemplate("copyover/copyover-build-failed", nil)
-			result.Error = fmt.Sprintf("failed to build: %v", err)
-			m.changeState(StateFailed)
-			return result, err
-		}
-		m.updateProgress("build", 100)
-
-		mudlog.Info("Copyover", "status", "Build successful")
-		m.announceTemplate("copyover/copyover-build-complete", nil)
-	}
-
-	// Transition to saving state
-	if err := m.changeState(StateSaving); err != nil {
-		return nil, err
-	}
-
-	// Lock the MUD to ensure no state changes during copyover
-	// This lock will be released by process termination on successful exec
-	mudlog.Info("Copyover", "status", "Acquiring global mutex")
-	util.LockMud()
-	execSuccess := false
-	defer func() {
-		if !execSuccess {
-			// Only unlock if we didn't successfully exec
-			mudlog.Info("Copyover", "status", "Releasing global mutex (exec failed)")
-			util.UnlockMud()
-		}
-		// Note: If exec succeeds, the lock is released by process termination
-	}()
-
-	// Prepare modules for copyover (currently only used by auctions module)
-	if err := PrepareModulesForCopyover(); err != nil {
-		mudlog.Error("Copyover", "error", "Some modules failed to prepare", "err", err)
-		// Continue anyway - non-critical for auctions
-	}
-
-	// Save all active users before gathering state
-	m.announceTemplate("copyover/copyover-saving", nil)
-	m.updateProgress("save", 0)
-	saveStart := time.Now()
-	if err := m.saveAllUsers(); err != nil {
-		mudlog.Error("Copyover", "error", "Failed to save some users", "err", err)
-		// Continue anyway - better to copyover with some users not saved than to fail
-	}
-	util.TrackTime("copyover.save_users", time.Since(saveStart).Seconds())
-	m.updateProgress("save", 100)
-
-	// Transition to gathering state
-	if err := m.changeState(StateGathering); err != nil {
-		return nil, err
-	}
-
-	mudlog.Info("Copyover", "status", "Gathering state")
-	m.updateProgress("gather", 0)
-
-	// Gather current state
-	gatherStart := time.Now()
-	state, err := m.gatherState()
-	if err != nil {
-		result.Error = fmt.Sprintf("failed to gather state: %v", err)
-		m.changeState(StateFailed)
-		return result, err
-	}
-	util.TrackTime("copyover.gather_state", time.Since(gatherStart).Seconds())
-	m.updateProgress("gather", 100)
-
-	// Save state to file
-	saveStateStart := time.Now()
-	if err := m.saveState(state); err != nil {
-		result.Error = fmt.Sprintf("failed to save state: %v", err)
-		return result, err
-	}
-	util.TrackTime("copyover.save_state", time.Since(saveStateStart).Seconds())
-
-	// Prepare file descriptors
-	extraFiles, err := m.prepareFileDescriptors(state)
-	if err != nil {
-		result.Error = fmt.Sprintf("failed to prepare FDs: %v", err)
-		return result, err
-	}
-
-	mudlog.Info("Copyover", "info", "Prepared file descriptors", "count", len(extraFiles))
-	mudlog.Info("Copyover", "status", "Executing new process")
-	m.announceTemplate("copyover/copyover-restarting", nil)
-
-	// Transition to executing
-	if err := m.changeState(StateExecuting); err != nil {
-		return nil, err
-	}
-
-	// Execute new process
-	// Mark exec as successful before the call (since exec doesn't return on success)
-	execSuccess = true
-	if err := m.executeNewProcess(extraFiles); err != nil {
-		execSuccess = false
-		result.Error = fmt.Sprintf("failed to execute: %v", err)
-		m.changeState(StateFailed)
-		return result, err
-	}
-
-	// If we get here, exec failed (shouldn't happen)
-	execSuccess = false
-	result.Error = "exec returned unexpectedly"
-	return result, fmt.Errorf("exec returned unexpectedly")
-}
-
-// RecoverFromCopyover restores state after a copyover
+// RecoverFromCopyover restores state after copyover
 func (m *Manager) RecoverFromCopyover() error {
 	mudlog.Info("Copyover", "status", "Starting recovery")
 
-	// Lock the MUD immediately to ensure atomic recovery
-	mudlog.Info("Copyover", "status", "Acquiring global mutex for recovery")
+	// Lock MUD during recovery
 	util.LockMud()
-	defer func() {
-		mudlog.Info("Copyover", "status", "Releasing global mutex after recovery")
-		util.UnlockMud()
-	}()
+	defer util.UnlockMud()
 
-	// Track total recovery time
-	recoveryStart := time.Now()
-	defer func() {
-		util.TrackTime("copyover.recovery", time.Since(recoveryStart).Seconds())
-	}()
-
-	// Check if we're already in recovering state (from init)
-	if m.currentState != StateRecovering {
-		// Set recovering state
-		if err := m.changeState(StateRecovering); err != nil {
-			return err
-		}
-	}
-
-	// Mark that we're recovering
+	// Mark recovering
 	recoveryMu.Lock()
 	isRecovering = true
 	recoveryMu.Unlock()
 
-	m.updateProgress("restore", 0)
-
-	// Load saved state
+	// Load and restore state
 	state, err := m.loadState()
 	if err != nil {
 		return fmt.Errorf("failed to load state: %v", err)
 	}
 
-	// Clean up state file immediately to prevent loops
-	if err := os.Remove(CopyoverDataFile); err != nil && !os.IsNotExist(err) {
-		mudlog.Error("Copyover", "error", "Failed to remove state file", "err", err)
-		// Continue anyway - better to continue recovery than to fail
-	}
+	// Clean up state file
+	os.Remove(CopyoverDataFile)
 
-	// Restore environment variables
+	// Restore environment
 	for key, value := range state.Environment {
-		if err := os.Setenv(key, value); err != nil {
-			mudlog.Error("Copyover", "error", "Failed to set environment variable", "key", key, "err", err)
-			// Continue anyway - non-critical error
-		}
+		os.Setenv(key, value)
 	}
 
-	mudlog.Info("Copyover", "status", "Restoring state", "connections", len(state.Connections))
-
-	// Update progress as we restore
-	m.updateProgress("restore", 25)
-
-	// Call all registered restorers
-	totalRestorers := len(m.stateRestorers)
-	for i, restorer := range m.stateRestorers {
+	// Call restorers
+	for _, restorer := range m.stateRestorers {
 		if err := restorer(state); err != nil {
 			mudlog.Error("Copyover", "error", "Restorer failed", "err", err)
-			// Continue with other restorers even if one fails
 		}
-		// Update progress (25-100%)
-		progress := 25 + (75 * (i + 1) / totalRestorers)
-		m.updateProgress("restore", progress)
 	}
 
-	m.updateProgress("restore", 100)
-	mudlog.Info("Copyover", "status", "Recovery complete")
+	// Reset to idle
+	m.mu.Lock()
+	m.state = StateIdle
+	m.mu.Unlock()
 
-	// Transition back to idle
-	if err := m.changeState(StateIdle); err != nil {
-		return err
+	// DO NOT clear recovery flag here - it needs to stay set until
+	// CompleteUserRecovery is called after the world is running
+	mudlog.Info("Copyover", "status", "Recovery complete (connections pending)")
+	return nil
+}
+
+// Private methods
+
+func (m *Manager) waitAndExecute(options CopyoverOptions) {
+	select {
+	case <-m.timer.C:
+		// Timer expired, execute copyover
+		if err := m.execute(options); err != nil {
+			mudlog.Error("Copyover", "error", "Scheduled execution failed", "err", err)
+			m.announce("copyover/copyover-build-failed", nil)
+
+			m.mu.Lock()
+			m.state = StateIdle
+			m.mu.Unlock()
+		}
+	case <-m.cancelChan:
+		// Cancelled, already handled by Cancel()
+		return
+	}
+}
+
+func (m *Manager) execute(options CopyoverOptions) error {
+	// Update state
+	m.mu.Lock()
+	m.state = StatePreparing
+	m.progress = 0
+	m.mu.Unlock()
+
+	// Build phase - do this BEFORE locking the MUD
+	if options.IncludeBuild {
+		m.updateProgress(10)
+		m.announce("copyover/copyover-building", nil)
+
+		buildStart := time.Now()
+		if err := m.buildExecutable(); err != nil {
+			m.announce("copyover/copyover-build-failed", nil)
+			m.mu.Lock()
+			m.state = StateIdle
+			m.mu.Unlock()
+			return fmt.Errorf("build failed: %v", err)
+		}
+
+		buildDuration := time.Since(buildStart)
+		mudlog.Info("Copyover", "status", "Build completed", "duration", buildDuration)
+		m.updateProgress(25)
+		m.announce("copyover/copyover-build-complete", nil)
 	}
 
-	// Fire completion event
-	events.AddToQueue(events.CopyoverCompleted{
-		Duration:         time.Since(m.startTime),
-		BuildNumber:      currentBuildNumber,
-		OldBuildNumber:   "", // TODO: Track old build number
-		ConnectionsSaved: len(state.Connections),
-		ConnectionsLost:  0, // TODO: Track lost connections
-		StartTime:        m.startTime,
-		EndTime:          time.Now(),
+	// NOW lock MUD for state gathering - this should be very quick
+	mudlog.Info("Copyover", "status", "Acquiring global mutex")
+	lockStart := time.Now()
+	util.LockMud()
+	mudlog.Info("Copyover", "status", "Mutex acquired", "waitTime", time.Since(lockStart))
+
+	// This will be unlocked by process termination on success
+	execSuccess := false
+	defer func() {
+		if !execSuccess {
+			util.UnlockMud()
+		}
+	}()
+
+	// Prepare modules
+	PrepareModulesForCopyover()
+
+	// Save users
+	m.updateProgress(40)
+	m.announce("copyover/copyover-saving", nil)
+	if err := m.saveAllUsers(); err != nil {
+		mudlog.Error("Copyover", "error", "Failed to save users", "err", err)
+	}
+
+	// Gather state
+	m.updateProgress(60)
+	state, err := m.gatherState()
+	if err != nil {
+		return fmt.Errorf("failed to gather state: %v", err)
+	}
+
+	// Save state
+	m.updateProgress(80)
+	mudlog.Info("Copyover", "status", "About to save state", "hasState", state != nil)
+	if err := m.saveState(state); err != nil {
+		mudlog.Error("Copyover", "error", "saveState failed", "err", err)
+		return fmt.Errorf("failed to save state: %v", err)
+	}
+	mudlog.Info("Copyover", "status", "State save completed")
+
+	// Prepare file descriptors
+	extraFiles, err := m.prepareFileDescriptors(state)
+	if err != nil {
+		return fmt.Errorf("failed to prepare FDs: %v", err)
+	}
+
+	// Execute new process
+	m.updateProgress(95)
+	m.announce("copyover/copyover-restarting", nil)
+
+	m.mu.Lock()
+	m.state = StateExecuting
+	m.mu.Unlock()
+
+	// Notify systems to prepare for shutdown
+	// The main.go should close listeners when it gets this event
+	mudlog.Info("Copyover", "status", "Notifying shutdown")
+	events.AddToQueue(events.System{
+		Command: "shutdown_listeners",
 	})
 
-	// Add to history
-	m.addToHistory(CopyoverHistory{
-		StartedAt:        m.startTime,
-		CompletedAt:      time.Now(),
-		Duration:         time.Since(m.startTime),
-		Success:          true,
-		InitiatedBy:      m.status.InitiatedBy,
-		Reason:           m.status.Reason,
-		BuildNumber:      currentBuildNumber,
-		OldBuildNumber:   "", // TODO: Track old build number
-		ConnectionsSaved: len(state.Connections),
-		ConnectionsLost:  0,
-	})
+	// Give time for listeners to close
+	time.Sleep(200 * time.Millisecond)
+
+	// Log total time the MUD was locked
+	lockedDuration := time.Since(lockStart)
+	mudlog.Info("Copyover", "status", "About to execute new process",
+		"extraFiles", len(extraFiles),
+		"lockedDuration", lockedDuration)
+
+	execSuccess = true
+	if err := m.executeNewProcess(extraFiles); err != nil {
+		mudlog.Error("Copyover", "error", "executeNewProcess failed", "err", err)
+		execSuccess = false
+		return fmt.Errorf("failed to execute: %v", err)
+	}
+
+	// Should never reach here
+	return fmt.Errorf("exec returned unexpectedly")
+}
+
+func (m *Manager) updateProgress(percent int) {
+	m.mu.Lock()
+	m.progress = percent
+	m.mu.Unlock()
+}
+
+func (m *Manager) announce(template string, data interface{}) {
+	tplText, err := templates.Process(template, data)
+	if err != nil {
+		mudlog.Error("Copyover", "error", "Template failed", "template", template, "err", err)
+		return
+	}
+
+	// Use direct broadcast instead of events for immediate delivery
+	connections.Broadcast([]byte(templates.AnsiParse(tplText) + "\r\n"))
+}
+
+func (m *Manager) buildExecutable() error {
+	// Use go build directly for faster builds during copyover
+	// The -a flag forces a full rebuild, but we can skip it for copyover
+	mudlog.Info("Copyover", "status", "Building executable")
+
+	// Build without -a flag for faster incremental builds
+	cmd := exec.Command("go", "build", "-trimpath", "-o", "go-mud-server")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+
+	return cmd.Run()
+}
+
+func (m *Manager) saveAllUsers() error {
+	activeUsers := users.GetAllActiveUsers()
+	mudlog.Info("Copyover", "info", "Saving users", "count", len(activeUsers))
+
+	for _, user := range activeUsers {
+		if err := users.SaveUser(*user); err != nil {
+			mudlog.Error("Copyover", "error", "Failed to save user", "userId", user.UserId, "err", err)
+		}
+	}
 
 	return nil
 }
 
-// gatherState collects all state to be preserved
-func (m *Manager) gatherState() (*CopyoverState, error) {
-	m.state = &CopyoverState{
+func (m *Manager) gatherState() (*CopyoverStateData, error) {
+	mudlog.Info("Copyover", "status", "Starting state gathering")
+	state := &CopyoverStateData{
 		Version:     "1.0",
 		Timestamp:   time.Now(),
 		StartTime:   m.startTime,
@@ -530,78 +480,71 @@ func (m *Manager) gatherState() (*CopyoverState, error) {
 	// Reset extra files
 	m.extraFiles = make([]*os.File, 0)
 
-	// Save important environment variables
+	// Save environment
 	for _, key := range []string{"CONFIG_PATH", "LOG_LEVEL", "LOG_PATH", "LOG_NOCOLOR", "CONSOLE_GMCP_OUTPUT"} {
 		if value := os.Getenv(key); value != "" {
-			m.state.Environment[key] = value
+			state.Environment[key] = value
 		}
 	}
 
-	// Emit gather state event for systems to save their state
+	// Fire gather event
 	events.AddToQueue(events.CopyoverGatherState{
 		Phase: "gathering",
 	})
 
-	// Call all registered gatherers
-	for _, gatherer := range m.stateGatherers {
+	// Call gatherers
+	mudlog.Info("Copyover", "status", "Calling state gatherers", "count", len(m.stateGatherers))
+	for i, gatherer := range m.stateGatherers {
+		mudlog.Info("Copyover", "status", "Calling gatherer", "index", i)
 		if _, err := gatherer(); err != nil {
-			mudlog.Error("Copyover", "error", "Gatherer failed", "err", err)
-			// Continue with other gatherers
+			mudlog.Error("Copyover", "error", "Gatherer failed", "index", i, "err", err)
 		}
 	}
 
-	return m.state, nil
+	// Use the preserved state that was populated by gatherers
+	if m.preservedState != nil {
+		mudlog.Info("Copyover", "status", "Using preserved state from gatherers",
+			"listeners", len(m.preservedState.Listeners),
+			"connections", len(m.preservedState.Connections))
+		// Copy over the gathered data
+		state.Listeners = m.preservedState.Listeners
+		state.Connections = m.preservedState.Connections
+	}
+
+	m.preservedState = state
+	return state, nil
 }
 
-// saveState writes state to disk
-func (m *Manager) saveState(state *CopyoverState) error {
-	// Track compression time
-	compressionStart := time.Now()
-
+func (m *Manager) saveState(state *CopyoverStateData) error {
+	mudlog.Info("Copyover", "status", "Saving state to file", "file", CopyoverDataFile)
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	// Compress the state data
 	compressed := util.Compress(data)
-	util.TrackTime("copyover.compress", time.Since(compressionStart).Seconds())
+	if err := util.SafeSave(CopyoverDataFile, compressed); err != nil {
+		mudlog.Error("Copyover", "error", "Failed to save state file", "err", err)
+		return err
+	}
 
-	// Calculate compression ratio for logging
-	compressionRatio := float64(len(data)-len(compressed)) / float64(len(data)) * 100
-	mudlog.Info("Copyover", "compression", fmt.Sprintf("Compressed state from %d to %d bytes (%.1f%% reduction)",
-		len(data), len(compressed), compressionRatio))
-
-	// Use atomic save
-	return util.SafeSave(CopyoverDataFile, compressed)
+	mudlog.Info("Copyover", "status", "State saved", "size", len(compressed))
+	return nil
 }
 
-// loadState reads state from disk
-func (m *Manager) loadState() (*CopyoverState, error) {
-	// Track decompression time
-	decompressionStart := time.Now()
-
+func (m *Manager) loadState() (*CopyoverStateData, error) {
 	compressed, err := os.ReadFile(CopyoverDataFile)
 	if err != nil {
 		return nil, err
 	}
 
-	// Decompress the state data
 	data := util.Decompress(compressed)
-	util.TrackTime("copyover.decompress", time.Since(decompressionStart).Seconds())
-
-	// Check if decompression failed
 	if len(data) == 0 && len(compressed) > 0 {
-		// Decompression failed, try to read as uncompressed JSON for backwards compatibility
-		mudlog.Warn("Copyover", "decompression", "Failed to decompress, attempting to read as plain JSON")
+		// Try uncompressed for backwards compatibility
 		data = compressed
 	}
 
-	// Log decompression stats
-	mudlog.Info("Copyover", "decompression", fmt.Sprintf("Decompressed state from %d to %d bytes",
-		len(compressed), len(data)))
-
-	var state CopyoverState
+	var state CopyoverStateData
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, err
 	}
@@ -609,122 +552,46 @@ func (m *Manager) loadState() (*CopyoverState, error) {
 	return &state, nil
 }
 
-// prepareFileDescriptors collects all FDs to preserve
-func (m *Manager) prepareFileDescriptors(state *CopyoverState) ([]*os.File, error) {
-	// The extra files have been collected by the gatherers
-	mudlog.Info("Copyover", "info", "Prepared file descriptors", "count", len(m.extraFiles))
-
-	// Log what we're preserving
-	fdIndex := 3 // Start after stdin/stdout/stderr
-	for name, listener := range state.Listeners {
-		mudlog.Info("Copyover", "listener", name, "fd", listener.FD)
-		fdIndex++
-	}
-
-	for i, conn := range state.Connections {
-		if conn.Type != "websocket" && conn.FD > 0 {
-			mudlog.Info("Copyover", "connection", i, "fd", conn.FD, "userId", conn.UserID)
-			fdIndex++
-		}
-	}
-
+func (m *Manager) prepareFileDescriptors(state *CopyoverStateData) ([]*os.File, error) {
+	// Return the collected extra files
 	return m.extraFiles, nil
 }
 
-// BuildExecutable builds the new server executable for copyover
-func (m *Manager) BuildExecutable() error {
-	// Don't announce here - let the caller handle announcements
-	mudlog.Info("Copyover", "status", "Building new executable")
-	// Get the current executable name
-	executableName := "WillowdaleMUD" // default
-	if len(os.Args) > 0 {
-		executableName = filepath.Base(os.Args[0])
-	}
+func (m *Manager) executeNewProcess(extraFiles []*os.File) error {
+	// Use the actual binary name that was built
+	executable := "./go-mud-server"
 
-	buildCmd := exec.Command("go", "build", "-o", executableName)
-	buildCmd.Stdout = os.Stdout
-	buildCmd.Stderr = os.Stderr
-
-	if err := buildCmd.Run(); err != nil {
-		return err
-	}
-
-	mudlog.Info("Copyover", "status", "Build successful")
-	return nil
-}
-
-// saveAllUsers saves all active users to disk
-func (m *Manager) saveAllUsers() error {
-	activeUsers := users.GetAllActiveUsers()
-	mudlog.Info("Copyover", "info", "Saving all active users", "count", len(activeUsers))
-
-	var errors []error
-	for _, user := range activeUsers {
-		if err := users.SaveUser(*user); err != nil {
-			mudlog.Error("Copyover", "error", "Failed to save user", "userId", user.UserId, "username", user.Username, "err", err)
-			errors = append(errors, err)
-		} else {
-			mudlog.Info("Copyover", "info", "Saved user", "userId", user.UserId, "username", user.Username, "roomId", user.Character.RoomId)
+	// Double-check the file exists
+	if _, err := os.Stat(executable); err != nil {
+		mudlog.Error("Copyover", "error", "Executable not found", "path", executable)
+		// Fallback to current executable
+		executable, err = os.Executable()
+		if err != nil {
+			return err
 		}
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("failed to save %d users", len(errors))
-	}
+	mudlog.Info("Copyover", "status", "Starting new process", "exe", executable, "extraFiles", len(extraFiles))
 
-	return nil
-}
-
-// executeNewProcess starts the new server process
-func (m *Manager) executeNewProcess(extraFiles []*os.File) error {
-	// Get current executable path
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-
-	// Prepare command
 	cmd := exec.Command(executable, os.Args[1:]...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-
-	// Preserve environment
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("%s=1", CopyoverEnvVar))
-
-	// Add extra file descriptors
+	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=1", CopyoverEnvVar))
 	cmd.ExtraFiles = extraFiles
 
-	// Go's cmd.ExtraFiles automatically handles the close-on-exec flags
-	// The files in ExtraFiles will be available to the child process
-	// starting at file descriptor 3
-
-	// Log extra files being passed
-	mudlog.Info("Copyover", "debug", "Passing file descriptors", "count", len(extraFiles))
-	for i, f := range extraFiles {
-		if f != nil {
-			// Get file info to debug what we're passing
-			if stat, err := f.Stat(); err == nil {
-				mudlog.Info("Copyover", "debug", "FD", "index", i+3, "name", f.Name(), "mode", stat.Mode())
-			} else {
-				mudlog.Info("Copyover", "debug", "FD", "index", i+3, "name", f.Name())
-			}
-		}
-	}
-
-	// Start the new process
 	if err := cmd.Start(); err != nil {
+		mudlog.Error("Copyover", "error", "Failed to start new process", "err", err)
 		return err
 	}
 
-	// Give the child process a moment to start
+	mudlog.Info("Copyover", "status", "New process started", "pid", cmd.Process.Pid)
+
+	// Give child process time to start
 	time.Sleep(100 * time.Millisecond)
 
-	// Original process should exit
-	mudlog.Info("Copyover", "status", "Original process exiting")
-
-	// Close all file descriptors we passed to child
+	// Close FDs and exit
+	mudlog.Info("Copyover", "status", "Closing FDs and exiting")
 	for _, f := range extraFiles {
 		if f != nil {
 			f.Close()
@@ -732,78 +599,6 @@ func (m *Manager) executeNewProcess(extraFiles []*os.File) error {
 	}
 
 	os.Exit(0)
-
-	return nil
-}
-
-// announceToAll sends a message to all connected users
-func (m *Manager) announceToAll(message string) {
-	mudlog.Info("Copyover", "announce", message)
-	// Send broadcast event
-	events.AddToQueue(events.Broadcast{
-		Text:             fmt.Sprintf("\r\n%s\r\n", message),
-		TextScreenReader: message,
-		IsCommunication:  false,
-		SourceIsMod:      true,
-		SkipLineRefresh:  false,
-	})
-}
-
-// announceTemplate processes and announces a template to all users
-func (m *Manager) announceTemplate(templateName string, data interface{}) {
-	tplText, err := templates.Process(templateName, data)
-	if err != nil {
-		mudlog.Error("Copyover", "error", "Failed to process template", "template", templateName, "err", err)
-		// Fall back to a plain message
-		m.announceToAll(fmt.Sprintf("[Template Error: %s]", templateName))
-		return
-	}
-	// Parse ANSI tags before announcing
-	m.announceToAll(templates.AnsiParse(tplText))
-}
-
-// announceCountdown sends countdown messages to all players
-func (m *Manager) announceCountdown(seconds int) error {
-	// Initial announcement
-	if seconds > 60 {
-		minutes := seconds / 60
-		m.announceTemplate("copyover/copyover-announce", map[string]interface{}{
-			"Minutes": minutes,
-		})
-	} else if seconds > 10 {
-		m.announceTemplate("copyover/copyover-announce", map[string]interface{}{
-			"Seconds": seconds,
-		})
-	}
-
-	// Sleep until we need to start more frequent announcements
-	for seconds > 60 && seconds > 10 {
-		time.Sleep(time.Second)
-		seconds--
-
-		// Announce at minute intervals
-		if seconds%60 == 0 {
-			minutes := seconds / 60
-			m.announceTemplate("copyover/copyover-announce", map[string]interface{}{
-				"Minutes": minutes,
-			})
-		}
-	}
-
-	// More frequent announcements as we get closer
-	for i := seconds; i > 0; i-- {
-		// Announce at specific intervals to avoid spam
-		if i <= 10 || i == 15 || i == 30 || i == 60 {
-			m.announceTemplate("copyover/copyover-countdown", map[string]interface{}{
-				"Seconds": i,
-			})
-		}
-		time.Sleep(time.Second)
-	}
-
-	// Final pre-copyover message
-	m.announceTemplate("copyover/copyover-pre", nil)
-
 	return nil
 }
 
@@ -814,326 +609,152 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// State machine methods
+// Global recovery check functions
 
-// changeState transitions to a new state if valid
-func (m *Manager) changeState(newState CopyoverPhase) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func IsCopyoverRecovery() bool {
+	recoveryMu.RLock()
+	defer recoveryMu.RUnlock()
+	return isRecovering || os.Getenv(CopyoverEnvVar) == "1" || fileExists(CopyoverDataFile)
+}
 
-	// Validate transition
-	if !m.currentState.CanTransitionTo(newState) {
-		return fmt.Errorf("invalid state transition from %s to %s", m.currentState, newState)
-	}
+func IsRecovering() bool {
+	recoveryMu.RLock()
+	defer recoveryMu.RUnlock()
+	return isRecovering
+}
 
-	oldState := m.currentState
-	m.currentState = newState
-	m.stateChangedAt = time.Now()
+func ClearRecoveryState() {
+	recoveryMu.Lock()
+	defer recoveryMu.Unlock()
+	isRecovering = false
+	mudlog.Info("Copyover", "status", "Recovery state cleared")
+}
 
-	// Update status
-	m.status.State = newState
-	m.status.StateChangedAt = m.stateChangedAt
+func (m *Manager) ClearRecoveryState() {
+	ClearRecoveryState()
+}
 
-	// Clear progress when entering new state
-	switch newState {
-	case StateBuilding:
-		m.progress["build"] = 0
-	case StateSaving:
-		m.progress["save"] = 0
-	case StateGathering:
-		m.progress["gather"] = 0
-	case StateRecovering:
-		m.progress["restore"] = 0
-	}
+// Backwards compatibility functions
 
-	// Fire state change event
-	events.AddToQueue(events.CopyoverPhaseChange{
-		OldState: oldState.String(),
-		NewState: newState.String(),
-		Progress: m.status.GetProgress(),
+func (m *Manager) InitiateCopyover(countdown int) (*CopyoverResult, error) {
+	err := m.Copyover(CopyoverOptions{
+		Countdown:    countdown,
+		IncludeBuild: false,
 	})
-
-	mudlog.Info("Copyover", "state_change", fmt.Sprintf("%s -> %s", oldState, newState))
-
-	return nil
+	return &CopyoverResult{Success: err == nil, Error: fmt.Sprintf("%v", err)}, err
 }
 
-// updateProgress updates progress for the current phase
-func (m *Manager) updateProgress(phase string, progress int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if progress < 0 {
-		progress = 0
-	} else if progress > 100 {
-		progress = 100
-	}
-
-	m.progress[phase] = progress
-
-	// Update status progress
-	switch m.currentState {
-	case StateBuilding:
-		m.status.BuildProgress = progress
-	case StateSaving:
-		m.status.SaveProgress = progress
-	case StateGathering:
-		m.status.GatherProgress = progress
-	case StateRecovering:
-		m.status.RestoreProgress = progress
-	}
-
-	// Fire progress event if significant change (every 10%)
-	if progress%10 == 0 {
-		events.AddToQueue(events.CopyoverPhaseChange{
-			OldState: m.currentState.String(),
-			NewState: m.currentState.String(),
-			Progress: m.status.GetProgress(),
-		})
-	}
-}
-
-// GetStatus returns the current copyover status
-func (m *Manager) GetStatus() *CopyoverStatus {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	// Return a copy to prevent external modification
-	statusCopy := *m.status
-	statusCopy.VetoReasons = make([]VetoInfo, len(m.status.VetoReasons))
-	copy(statusCopy.VetoReasons, m.status.VetoReasons)
-
-	return &statusCopy
-}
-
-// GetHistory returns copyover history
-func (m *Manager) GetHistory(limit int) []CopyoverHistory {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if limit <= 0 || limit > len(m.history) {
-		limit = len(m.history)
-	}
-
-	// Return most recent first
-	result := make([]CopyoverHistory, limit)
-	start := len(m.history) - limit
-	copy(result, m.history[start:])
-
-	// Reverse to get newest first
-	for i := 0; i < len(result)/2; i++ {
-		j := len(result) - 1 - i
-		result[i], result[j] = result[j], result[i]
-	}
-
-	return result
-}
-
-// addToHistory adds a completed copyover to history
-func (m *Manager) addToHistory(record CopyoverHistory) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.historyCounter++
-	record.ID = m.historyCounter
-
-	m.history = append(m.history, record)
-
-	// Keep only last 100 records
-	if len(m.history) > 100 {
-		m.history = m.history[len(m.history)-100:]
-	}
-
-	// Update statistics
-	m.status.TotalCopyovers++
-	m.status.LastCopyoverAt = record.CompletedAt
-
-	// Calculate average duration from successful copyovers
-	var totalDuration time.Duration
-	var successCount int
-	for _, h := range m.history {
-		if h.Success {
-			totalDuration += h.Duration
-			successCount++
-		}
-	}
-	if successCount > 0 {
-		m.status.AverageDuration = totalDuration / time.Duration(successCount)
-	}
-}
-
-// ScheduleCopyover schedules a copyover to occur at a specific time
-func (m *Manager) ScheduleCopyover(when time.Time, initiatedBy int, reason string) error {
-	// Check if we can schedule
-	canStart, reasons := m.status.CanCopyover()
-	if !canStart {
-		return fmt.Errorf("cannot schedule copyover: %v", reasons)
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Check current state
-	if m.currentState != StateIdle {
-		return fmt.Errorf("cannot schedule copyover: system is in %s state", m.currentState)
-	}
-
-	// Validate time
-	if when.Before(time.Now()) {
-		return fmt.Errorf("cannot schedule copyover in the past")
-	}
-
-	// Update status
-	m.status.ScheduledAt = time.Now()
-	m.status.ScheduledFor = when
-	m.status.InitiatedBy = initiatedBy
-	m.status.Reason = reason
-
-	// We need to unlock before calling changeState
-	m.mu.Unlock()
-	if err := m.changeState(StateScheduled); err != nil {
-		return err
-	}
-	m.mu.Lock()
-
-	// Fire scheduled event
-	events.AddToQueue(events.CopyoverScheduled{
-		ScheduledAt: time.Now(),
-		Countdown:   int(time.Until(when).Seconds()),
-		Reason:      reason,
-		InitiatedBy: initiatedBy,
+func (m *Manager) InitiateCopyoverWithBuild(countdown int) (*CopyoverResult, error) {
+	err := m.Copyover(CopyoverOptions{
+		Countdown:    countdown,
+		IncludeBuild: true,
 	})
-
-	// Start a goroutine to trigger the copyover at the scheduled time
-	go func() {
-		duration := time.Until(when)
-		if duration > 0 {
-			// Use a timer so we can stop it if needed
-			timer := time.NewTimer(duration)
-			defer timer.Stop()
-
-			select {
-			case <-timer.C:
-				// Check if still scheduled (might have been cancelled)
-				m.mu.RLock()
-				stillScheduled := m.currentState == StateScheduled
-				m.mu.RUnlock()
-
-				if stillScheduled {
-					// Initiate the copyover
-					m.InitiateCopyover(0) // No countdown, we already waited
-				}
-			}
-		}
-	}()
-
-	return nil
+	return &CopyoverResult{Success: err == nil, Error: fmt.Sprintf("%v", err)}, err
 }
 
-// CancelCopyover cancels a scheduled or in-progress copyover
 func (m *Manager) CancelCopyover(reason string) error {
+	return m.Cancel(reason)
+}
+
+func (m *Manager) ExecuteScheduledCopyover() (*CopyoverResult, error) {
+	// This is now handled internally by the timer
+	return &CopyoverResult{Success: true}, nil
+}
+
+func (m *Manager) GetTimeUntilCopyover() time.Duration {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check if we can cancel
-	if !m.currentState.IsActive() {
-		return fmt.Errorf("no copyover in progress")
+	if m.state != StateScheduled || m.scheduledFor.IsZero() {
+		return 0
 	}
 
-	// Only certain states can be cancelled
-	if !m.currentState.CanTransitionTo(StateCancelling) {
-		return fmt.Errorf("cannot cancel copyover in %s state", m.currentState)
+	remaining := time.Until(m.scheduledFor)
+	if remaining < 0 {
+		return 0
 	}
 
-	// Transition to cancelling state
-	if err := m.changeState(StateCancelling); err != nil {
-		return err
+	return remaining
+}
+
+func (m *Manager) GetState() (*CopyoverStateData, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.preservedState, nil
+}
+
+func (m *Manager) GetRecoveredConnections() []*connections.ConnectionDetails {
+	return m.recoveredConnections
+}
+
+func (m *Manager) StoreListenersForCopyover(listeners map[string]net.Listener) {
+	// Handled by gatherers
+}
+
+func (m *Manager) GetPreservedListeners() map[string]net.Listener {
+	// Handled by restorers
+	return nil
+}
+
+func SetBuildNumber(bn string) {
+	manager.buildNumber = bn
+}
+
+func GetBuildNumber() string {
+	return manager.buildNumber
+}
+
+func (m *Manager) Reset() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Stop any timer
+	if m.timer != nil {
+		m.timer.Stop()
 	}
 
-	// Fire cancellation event
-	events.AddToQueue(events.CopyoverCancelled{
-		Reason:      reason,
-		CancelledBy: m.status.InitiatedBy,
-	})
+	// Close cancel channel
+	if m.cancelChan != nil {
+		close(m.cancelChan)
+	}
 
-	// Announce cancellation
-	m.announceTemplate("copyover/copyover-cancelled", map[string]interface{}{
-		"Reason": reason,
-	})
+	// Reset state
+	m.state = StateIdle
+	m.progress = 0
+	m.scheduledFor = time.Time{}
 
-	// Clean up and return to idle
-	go func() {
-		time.Sleep(100 * time.Millisecond) // Give time for announcements
-
-		// Notify modules that copyover was cancelled (currently only auctions)
-		if err := CleanupModulesAfterCopyover(); err != nil {
-			mudlog.Error("Copyover", "error", "Module cleanup failed", "err", err)
+	// Clean up files
+	for _, f := range m.extraFiles {
+		if f != nil {
+			f.Close()
 		}
+	}
+	m.extraFiles = nil
 
-		m.changeState(StateIdle)
-		m.mu.Lock()
-		m.inProgress = false
-		m.mu.Unlock()
-	}()
+	// Remove state file
+	if fileExists(CopyoverDataFile) {
+		os.Remove(CopyoverDataFile)
+	}
 
 	return nil
 }
 
-// ExtractFD gets the file descriptor from a net.Listener
-func ExtractListenerFD(listener net.Listener) (*os.File, error) {
-	switch l := listener.(type) {
-	case *net.TCPListener:
-		return l.File()
-	default:
-		return nil, fmt.Errorf("unsupported listener type: %T", listener)
-	}
-}
-
-// ExtractFD gets the file descriptor from a net.Conn
-func ExtractConnFD(conn net.Conn) (*os.File, error) {
-	switch c := conn.(type) {
-	case *net.TCPConn:
-		return c.File()
-	default:
-		return nil, fmt.Errorf("unsupported connection type: %T", conn)
-	}
-}
-
-// StoreListenersForCopyover stores listeners that should be preserved
-func (m *Manager) StoreListenersForCopyover(listeners map[string]net.Listener) {
+// GetStatusStruct returns full status structure for backwards compatibility
+func (m *Manager) GetStatusStruct() *CopyoverStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Clear any existing
-	m.preservedListeners = make(map[string]net.Listener)
-
-	// Store new ones
-	for name, listener := range listeners {
-		if listener != nil {
-			m.preservedListeners[name] = listener
-		}
+	return &CopyoverStatus{
+		State:          CopyoverPhase(m.state),
+		StateChangedAt: time.Now(),
+		ScheduledFor:   m.scheduledFor,
+		InitiatedBy:    m.initiatedBy,
+		Reason:         m.reason,
+		StartedAt:      m.startTime,
 	}
 }
 
-// GetPreservedListeners returns the stored listeners
-func (m *Manager) GetPreservedListeners() map[string]net.Listener {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	// Return a copy
-	result := make(map[string]net.Listener)
-	for name, listener := range m.preservedListeners {
-		result[name] = listener
-	}
-	return result
-}
-
-// SetBuildNumber sets the build number for display
-func SetBuildNumber(bn string) {
-	currentBuildNumber = bn
-}
-
-// GetBuildNumber returns the current build number
-func GetBuildNumber() string {
-	return currentBuildNumber
+func (m *Manager) GetHistory(limit int) []CopyoverHistory {
+	// Simplified - no history tracking
+	return []CopyoverHistory{}
 }

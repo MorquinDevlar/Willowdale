@@ -233,7 +233,7 @@ func init() {
 		return states, nil
 	})
 
-	manager.RegisterStateRestorer(func(state *CopyoverState) error {
+	manager.RegisterStateRestorer(func(state *CopyoverStateData) error {
 		// Extract module states from copyover data
 		// This would need to be implemented based on how state is stored
 		// For now, we'll use the already gathered states

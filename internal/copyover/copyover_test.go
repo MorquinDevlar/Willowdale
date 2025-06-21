@@ -9,7 +9,7 @@ import (
 
 func TestCopyoverPhaseSerialization(t *testing.T) {
 	// Create a sample state
-	state := &CopyoverState{
+	state := &CopyoverStateData{
 		Version:   "1.0",
 		Timestamp: time.Now(),
 		Environment: map[string]string{
@@ -61,7 +61,7 @@ func TestCopyoverPhaseSerialization(t *testing.T) {
 	t.Logf("Serialized state (%d bytes):\n%s", len(data), string(data))
 
 	// Test deserialization
-	var loaded CopyoverState
+	var loaded CopyoverStateData
 	if err := json.Unmarshal(data, &loaded); err != nil {
 		t.Fatalf("Failed to deserialize: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestCopyoverPhaseSerialization(t *testing.T) {
 
 func TestManagerBasics(t *testing.T) {
 	mgr := &Manager{
-		fdMap:          make(map[string]int),
+		state:          StateIdle,
 		stateGatherers: make([]StateGatherer, 0),
 		stateRestorers: make([]StateRestorer, 0),
 	}
@@ -119,7 +119,7 @@ func TestManagerBasics(t *testing.T) {
 	}
 
 	// Test restorer registration
-	mgr.RegisterStateRestorer(func(state *CopyoverState) error {
+	mgr.RegisterStateRestorer(func(state *CopyoverStateData) error {
 		return nil
 	})
 

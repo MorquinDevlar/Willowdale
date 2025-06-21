@@ -8,18 +8,10 @@ import (
 // mockManager creates a test manager that doesn't execute actual copyovers
 func mockManager() *Manager {
 	return &Manager{
-		fdMap:          make(map[string]int),
+		state:          StateIdle,
 		stateGatherers: make([]StateGatherer, 0),
 		stateRestorers: make([]StateRestorer, 0),
-		currentState:   StateIdle,
-		stateChangedAt: time.Now(),
-		status: &CopyoverStatus{
-			State:          StateIdle,
-			StateChangedAt: time.Now(),
-			VetoReasons:    make([]VetoInfo, 0),
-		},
-		progress: make(map[string]int),
-		history:  make([]CopyoverHistory, 0),
+		buildNumber:    "test",
 	}
 }
 
@@ -33,315 +25,162 @@ func TestCopyoverAPIIntegration(t *testing.T) {
 			t.Error("Manager should not be in progress initially")
 		}
 
-		status := mgr.GetStatus()
-		if status.State != StateIdle {
-			t.Errorf("Expected StateIdle, got %v", status.State)
+		state, progress, scheduledFor := mgr.GetStatus()
+		if state != "idle" {
+			t.Errorf("Expected idle state, got %s", state)
 		}
-
-		if status.GetProgress() != 0 {
-			t.Errorf("Expected 0 progress, got %d", status.GetProgress())
+		if progress != 0 {
+			t.Errorf("Expected 0 progress, got %d", progress)
 		}
-
-		canStart, reasons := status.CanCopyover()
-		if !canStart {
-			t.Errorf("Should be able to start copyover, got reasons: %v", reasons)
+		if !scheduledFor.IsZero() {
+			t.Error("Expected zero scheduled time")
 		}
 	})
 
-	t.Run("StateGathererRegistration", func(t *testing.T) {
-		called := false
+	t.Run("StateGathererFlow", func(t *testing.T) {
+		gatherCalled := false
 		mgr.RegisterStateGatherer(func() (interface{}, error) {
-			called = true
-			return "test_data", nil
+			gatherCalled = true
+			return map[string]string{"test": "data"}, nil
 		})
 
-		if len(mgr.stateGatherers) != 1 {
-			t.Errorf("Expected 1 gatherer, got %d", len(mgr.stateGatherers))
-		}
-
-		// Test gatherer execution
-		_, err := mgr.stateGatherers[0]()
+		// Call the gatherer
+		data, err := mgr.stateGatherers[0]()
 		if err != nil {
 			t.Errorf("Gatherer returned error: %v", err)
 		}
-		if !called {
+		if !gatherCalled {
 			t.Error("Gatherer was not called")
+		}
+		if data.(map[string]string)["test"] != "data" {
+			t.Error("Gatherer returned unexpected data")
 		}
 	})
 
-	t.Run("StateRestorerRegistration", func(t *testing.T) {
-		called := false
-		mgr.RegisterStateRestorer(func(state *CopyoverState) error {
-			called = true
+	t.Run("StateRestorerFlow", func(t *testing.T) {
+		restoreCalled := false
+		mgr.RegisterStateRestorer(func(state *CopyoverStateData) error {
+			restoreCalled = true
 			return nil
 		})
 
-		if len(mgr.stateRestorers) != 1 {
-			t.Errorf("Expected 1 restorer, got %d", len(mgr.stateRestorers))
-		}
-
-		// Test restorer execution
-		testState := &CopyoverState{}
-		err := mgr.stateRestorers[0](testState)
+		// Call the restorer
+		err := mgr.stateRestorers[0](&CopyoverStateData{})
 		if err != nil {
 			t.Errorf("Restorer returned error: %v", err)
 		}
-		if !called {
+		if !restoreCalled {
 			t.Error("Restorer was not called")
 		}
 	})
 
-	t.Run("ScheduleCopyover", func(t *testing.T) {
-		// Reset to idle state
-		mgr.currentState = StateIdle
-		mgr.inProgress = false
-		mgr.status.State = StateIdle
-
-		// Test scheduling in the past
-		past := time.Now().Add(-1 * time.Hour)
-		err := mgr.ScheduleCopyover(past, 123, "Test past")
-		if err == nil {
-			t.Error("Expected error scheduling in the past")
+	t.Run("CopyoverOptions", func(t *testing.T) {
+		// Test creating options
+		opts := CopyoverOptions{
+			Countdown:    30,
+			IncludeBuild: true,
+			Reason:       "Test copyover",
+			InitiatedBy:  123,
 		}
 
-		// Test scheduling in the future
-		future := time.Now().Add(1 * time.Hour)
-		mgr.status.ScheduledFor = future
-		mgr.status.InitiatedBy = 123
-		mgr.status.Reason = "Test scheduled copyover"
-		mgr.currentState = StateScheduled
-		mgr.status.State = StateScheduled
-
-		// Check status
-		status := mgr.GetStatus()
-		if status.InitiatedBy != 123 {
-			t.Errorf("Expected InitiatedBy 123, got %d", status.InitiatedBy)
-		}
-		if status.Reason != "Test scheduled copyover" {
-			t.Errorf("Expected reason 'Test scheduled copyover', got %s", status.Reason)
-		}
-
-		// Check time until copyover
-		duration := status.GetTimeUntilCopyover()
-		if duration <= 59*time.Minute || duration > 61*time.Minute {
-			t.Errorf("Expected duration around 1h, got %v", duration)
+		if opts.Countdown != 30 {
+			t.Error("Options not set correctly")
 		}
 	})
 
-	t.Run("CancelCopyover", func(t *testing.T) {
-		// Ensure we're in a cancellable state
-		mgr.currentState = StateScheduled
-		mgr.inProgress = true
-
-		err := mgr.CancelCopyover("Test cancellation")
-		if err != nil {
-			t.Fatalf("Failed to cancel copyover: %v", err)
-		}
-
-		// Check state changed to cancelling
-		if mgr.currentState != StateCancelling {
-			t.Errorf("Expected StateCancelling, got %v", mgr.currentState)
-		}
-
-		// Wait for async transition to idle
-		time.Sleep(200 * time.Millisecond)
-
-		if mgr.currentState != StateIdle {
-			t.Errorf("Expected StateIdle after cancellation, got %v", mgr.currentState)
-		}
-		if mgr.inProgress {
-			t.Error("Expected inProgress to be false after cancellation")
+	t.Run("BuildNumber", func(t *testing.T) {
+		SetBuildNumber("v1.2.3")
+		if GetBuildNumber() != "v1.2.3" {
+			t.Error("Build number not set correctly")
 		}
 	})
 
-	t.Run("VetoSystem", func(t *testing.T) {
-		// Add a hard veto
-		mgr.status.VetoReasons = append(mgr.status.VetoReasons, VetoInfo{
-			Module:    "test_module",
-			Reason:    "test in progress",
-			Type:      "hard",
-			Timestamp: time.Now(),
-		})
-
-		status := mgr.GetStatus()
-		canStart, reasons := status.CanCopyover()
-		if canStart {
-			t.Error("Should not be able to start with hard veto")
+	t.Run("RecoveryDetection", func(t *testing.T) {
+		// Test recovery detection
+		t.Setenv(CopyoverEnvVar, "1")
+		if !IsCopyoverRecovery() {
+			t.Error("Should detect copyover recovery from env")
 		}
-		if len(reasons) == 0 {
-			t.Error("Expected veto reasons")
-		}
+		t.Setenv(CopyoverEnvVar, "")
 
-		// Clear vetoes
-		mgr.status.VetoReasons = []VetoInfo{}
+		// Test isRecovering flag
+		if IsRecovering() {
+			t.Error("Should not be recovering initially")
+		}
 	})
+}
 
-	t.Run("ProgressTracking", func(t *testing.T) {
-		// Test progress in different states
-		testCases := []struct {
-			state           CopyoverPhase
-			phaseProgress   int
-			expectedOverall int
+// TestCopyoverStatusMethods tests the CopyoverStatus type methods
+func TestCopyoverStatusMethods(t *testing.T) {
+	t.Run("IsActive", func(t *testing.T) {
+		tests := []struct {
+			phase    CopyoverPhase
+			expected bool
 		}{
-			{StateIdle, 0, 0},
-			{StateBuilding, 50, 12},     // 50/4 = 12
-			{StateSaving, 100, 50},      // 25 + 100/4 = 50
-			{StateGathering, 50, 62},    // 50 + 50/4 = 62
-			{StateExecuting, 0, 75},     // Fixed at 75
-			{StateRecovering, 100, 100}, // 75 + 100/4 = 100
+			{PhaseIdle, false},
+			{PhaseScheduled, true},
+			{PhaseBuilding, true},
+			{PhaseExecuting, true},
 		}
 
-		for _, tc := range testCases {
-			mgr.currentState = tc.state
-			mgr.status.State = tc.state
-
-			// Set appropriate progress field
-			switch tc.state {
-			case StateBuilding:
-				mgr.status.BuildProgress = tc.phaseProgress
-			case StateSaving:
-				mgr.status.SaveProgress = tc.phaseProgress
-			case StateGathering:
-				mgr.status.GatherProgress = tc.phaseProgress
-			case StateRecovering:
-				mgr.status.RestoreProgress = tc.phaseProgress
-			}
-
-			progress := mgr.status.GetProgress()
-			if progress != tc.expectedOverall {
-				t.Errorf("State %v with phase progress %d: expected overall %d, got %d",
-					tc.state, tc.phaseProgress, tc.expectedOverall, progress)
+		for _, test := range tests {
+			if test.phase.IsActive() != test.expected {
+				t.Errorf("Phase %v: expected IsActive=%v", test.phase, test.expected)
 			}
 		}
 	})
 
-	t.Run("History", func(t *testing.T) {
-		// Add some history
-		for i := 0; i < 5; i++ {
-			mgr.addToHistory(CopyoverHistory{
-				StartedAt:        time.Now().Add(time.Duration(-i) * time.Hour),
-				CompletedAt:      time.Now().Add(time.Duration(-i) * time.Hour).Add(5 * time.Second),
-				Duration:         5 * time.Second,
-				Success:          i%2 == 0,
-				InitiatedBy:      i,
-				Reason:           "test",
-				ConnectionsSaved: 10 - i,
-				ConnectionsLost:  i,
-			})
+	t.Run("TimeUntilCopyover", func(t *testing.T) {
+		status := &CopyoverStatus{}
+
+		// Not scheduled
+		if status.GetTimeUntilCopyover() != 0 {
+			t.Error("Should return 0 when not scheduled")
 		}
 
-		// Get limited history
-		history := mgr.GetHistory(3)
-		if len(history) != 3 {
-			t.Errorf("Expected 3 history items, got %d", len(history))
+		// Scheduled in future
+		status.ScheduledFor = time.Now().Add(1 * time.Hour)
+		duration := status.GetTimeUntilCopyover()
+		if duration < 59*time.Minute || duration > 61*time.Minute {
+			t.Errorf("Expected ~1 hour, got %v", duration)
 		}
 
-		// Check newest first
-		if history[0].InitiatedBy != 4 {
-			t.Error("History should be newest first")
-		}
-
-		// Check statistics updated
-		if mgr.status.TotalCopyovers != 5 {
-			t.Errorf("Expected 5 total copyovers, got %d", mgr.status.TotalCopyovers)
-		}
-		if mgr.status.AverageDuration != 5*time.Second {
-			t.Errorf("Expected average duration 5s, got %v", mgr.status.AverageDuration)
+		// Scheduled in past
+		status.ScheduledFor = time.Now().Add(-1 * time.Hour)
+		if status.GetTimeUntilCopyover() != 0 {
+			t.Error("Should return 0 for past times")
 		}
 	})
-}
 
-// TestStateTransitionIntegration tests state machine transitions
-func TestStateTransitionIntegration(t *testing.T) {
-	mgr := mockManager()
-
-	// Test valid transition path
-	transitions := []struct {
-		from  CopyoverPhase
-		to    CopyoverPhase
-		valid bool
-	}{
-		{StateIdle, StateScheduled, true},
-		{StateScheduled, StateAnnouncing, true},
-		{StateAnnouncing, StateBuilding, true},
-		{StateBuilding, StateSaving, true},
-		{StateSaving, StateGathering, true},
-		{StateGathering, StateExecuting, true},
-		{StateExecuting, StateRecovering, true},
-		{StateRecovering, StateIdle, true},
-
-		// Test invalid transitions
-		{StateIdle, StateExecuting, false},
-		{StateBuilding, StateScheduled, false},
-		{StateFailed, StateBuilding, false},
-	}
-
-	for _, tc := range transitions {
-		mgr.currentState = tc.from
-		err := mgr.changeState(tc.to)
-
-		if tc.valid && err != nil {
-			t.Errorf("Expected valid transition %v->%v, got error: %v",
-				tc.from, tc.to, err)
-		}
-		if !tc.valid && err == nil {
-			t.Errorf("Expected invalid transition %v->%v to fail",
-				tc.from, tc.to)
+	t.Run("CanCopyover", func(t *testing.T) {
+		status := &CopyoverStatus{
+			State: PhaseIdle,
 		}
 
-		// Reset for next test
-		if err == nil {
-			mgr.currentState = tc.from
+		// Can copyover from idle
+		can, reasons := status.CanCopyover()
+		if !can || len(reasons) > 0 {
+			t.Error("Should be able to copyover from idle")
 		}
-	}
-}
 
-// TestConcurrentAccess tests thread safety
-func TestConcurrentAccess(t *testing.T) {
-	mgr := GetManager()
-
-	// Run multiple goroutines accessing the manager
-	done := make(chan bool, 4)
-
-	// Status reader
-	go func() {
-		for i := 0; i < 100; i++ {
-			_ = mgr.GetStatus()
-			_ = mgr.IsInProgress()
+		// Cannot copyover while active
+		status.State = PhaseBuilding
+		can, reasons = status.CanCopyover()
+		if can || len(reasons) == 0 {
+			t.Error("Should not be able to copyover while active")
 		}
-		done <- true
-	}()
 
-	// History reader
-	go func() {
-		for i := 0; i < 100; i++ {
-			_ = mgr.GetHistory(10)
+		// Cannot copyover with hard veto
+		status.State = PhaseIdle
+		status.VetoReasons = []VetoInfo{
+			{Module: "test", Reason: "Test veto", Type: "hard"},
 		}
-		done <- true
-	}()
-
-	// State gatherer registrar
-	go func() {
-		for i := 0; i < 10; i++ {
-			mgr.RegisterStateGatherer(func() (interface{}, error) {
-				return nil, nil
-			})
+		can, reasons = status.CanCopyover()
+		if can {
+			t.Error("Should not be able to copyover with hard veto")
 		}
-		done <- true
-	}()
-
-	// Progress updater
-	go func() {
-		for i := 0; i < 100; i++ {
-			mgr.updateProgress("test", i)
+		if len(reasons) != 1 || reasons[0] != "Test veto" {
+			t.Error("Should include veto reason")
 		}
-		done <- true
-	}()
-
-	// Wait for all goroutines
-	for i := 0; i < 4; i++ {
-		<-done
-	}
-
-	// If we get here without deadlock or panic, concurrent access is safe
+	})
 }

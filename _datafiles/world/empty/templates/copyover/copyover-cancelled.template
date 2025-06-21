@@ -1,0 +1,11 @@
+<ansi fg="red-bold">═══════════════════════════════════════════════════</ansi>
+<ansi fg="red-bold">            COPYOVER CANCELLED</ansi>
+<ansi fg="red-bold">═══════════════════════════════════════════════════</ansi>
+
+The scheduled copyover has been <ansi fg="yellow">cancelled</ansi>.
+
+{{if .Reason}}Reason: <ansi fg="cyan">{{.Reason}}</ansi>{{end}}
+
+Normal operations will continue uninterrupted.
+
+<ansi fg="red-bold">═══════════════════════════════════════════════════</ansi>
