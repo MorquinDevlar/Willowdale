@@ -171,7 +171,7 @@ func roomData(w http.ResponseWriter, r *http.Request) {
 
 	allBiomes := rooms.GetAllBiomes()
 	sort.SliceStable(allBiomes, func(i, j int) bool {
-		return allBiomes[i].Name() < allBiomes[j].Name()
+		return allBiomes[i].Name < allBiomes[j].Name
 	})
 	tplData[`biomes`] = allBiomes
 

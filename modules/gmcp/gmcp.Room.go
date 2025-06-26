@@ -352,7 +352,7 @@ func (g *GMCPRoomModule) GetRoomNode(user *users.UserRecord, gmcpModule string) 
 		payload.Id = room.RoomId
 		payload.Name = room.Title
 		payload.Area = room.Zone
-		payload.Environment = room.GetBiome().Name()
+		payload.Environment = room.GetBiome().Name
 		payload.Details = []string{}
 
 		// Coordinates
