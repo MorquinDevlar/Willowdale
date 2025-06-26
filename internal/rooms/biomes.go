@@ -101,6 +101,17 @@ func LoadBiomeDataFiles() {
 			LitArea:     true,
 			Description: `A default biome used when no other biome is specified.`,
 		}
+	} else {
+		// Always ensure a default biome exists as fallback
+		if _, ok := biomes[`default`]; !ok {
+			biomes[`default`] = &BiomeInfo{
+				BiomeId:     `default`,
+				Name:        `Default`,
+				Symbol:      `•`,
+				LitArea:     true,
+				Description: `A default biome used when no other biome is specified.`,
+			}
+		}
 	}
 
 	mudlog.Info("biomes.LoadBiomeDataFiles()", "loadedCount", len(biomes), "Time Taken", time.Since(start))

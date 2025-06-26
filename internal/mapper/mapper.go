@@ -878,12 +878,12 @@ func (r *mapper) getMapNode(roomId int) *mapNode {
 		}
 	} else {
 		b := room.GetBiome()
-		if b.GetSymbol() != 0 {
+		if b != nil && b.GetSymbol() != 0 {
 			mNode.Symbol = b.GetSymbol()
 		} else {
 			mNode.Symbol = defaultMapSymbol
 		}
-		if b.Name != `` {
+		if b != nil && b.Name != `` {
 			mNode.Legend = b.Name
 		}
 	}
