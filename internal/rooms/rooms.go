@@ -17,7 +17,6 @@ import (
 	"github.com/GoMudEngine/GoMud/internal/items"
 	"github.com/GoMudEngine/GoMud/internal/keywords"
 	"github.com/GoMudEngine/GoMud/internal/mobs"
-	"github.com/GoMudEngine/GoMud/internal/mudlog"
 	"github.com/GoMudEngine/GoMud/internal/mutators"
 	"github.com/GoMudEngine/GoMud/internal/users"
 	"github.com/GoMudEngine/GoMud/internal/util"
@@ -2199,12 +2198,6 @@ func (r *Room) Validate() error {
 		}
 	}
 
-	// Validate the biome.
-	if r.Biome != `` {
-		if _, found := GetBiome(r.Biome); !found {
-			return fmt.Errorf("invalid biome: %s", r.Biome)
-		}
-	}
 
 	// Make sure all items are validated (and have uids)
 	for i := range r.Items {
@@ -2251,9 +2244,6 @@ func (r *Room) GetBiome() *BiomeInfo {
 
 	bInfo, ok := GetBiome(r.Biome)
 	if !ok {
-		if r.Biome != `` {
-			mudlog.Warn("Biome not found", "biome", r.Biome, "room", r.RoomId, "zone", r.Zone)
-		}
 		// If biome not found, try to get the default biome
 		bInfo, _ = GetBiome(``)
 	}

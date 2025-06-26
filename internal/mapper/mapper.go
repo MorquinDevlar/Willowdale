@@ -982,6 +982,9 @@ func GetMapper(roomId int, forceRefresh ...bool) *mapper {
 
 func PreCacheMaps() {
 
+	// Check biomes for all rooms
+	validateRoomBiomes()
+
 	for _, name := range rooms.GetAllZoneNames() {
 		rootRoomId, _ := rooms.GetZoneRoot(name)
 		GetMapper(rootRoomId)
@@ -989,6 +992,39 @@ func PreCacheMaps() {
 
 	for _, roomId := range rooms.GetAllRoomIds() {
 		GetMapper(roomId)
+	}
+}
+
+func validateRoomBiomes() {
+	missingBiomeCount := 0
+	invalidBiomeCount := 0
+	
+	for _, roomId := range rooms.GetAllRoomIds() {
+		room := rooms.LoadRoom(roomId)
+		if room == nil {
+			continue
+		}
+		
+		originalBiome := room.Biome
+		
+		// Check if room has no biome
+		if originalBiome == "" {
+			zoneBiome := rooms.GetZoneBiome(room.Zone)
+			if zoneBiome == "" {
+				mudlog.Warn("Room using default biome (no room or zone biome)", "room", roomId, "zone", room.Zone)
+				missingBiomeCount++
+			}
+		} else {
+			// Check if biome exists
+			if _, ok := rooms.GetBiome(originalBiome); !ok {
+				mudlog.Warn("Room references non-existent biome", "room", roomId, "biome", originalBiome, "zone", room.Zone)
+				invalidBiomeCount++
+			}
+		}
+	}
+	
+	if missingBiomeCount > 0 || invalidBiomeCount > 0 {
+		mudlog.Info("Biome validation complete", "missing", missingBiomeCount, "invalid", invalidBiomeCount)
 	}
 }
 
