@@ -202,6 +202,13 @@ func loadHardcodedBiomes() {
 			DarkArea:    true,
 			Description: `The land is covered in caves of all sorts. You never know what you'll find in them.`,
 		},
+		`dungeon`: &BiomeInfo{
+			BiomeId:     `dungeon`,
+			Name:        `Dungeon`,
+			Symbol:      `•`,
+			DarkArea:    true,
+			Description: `These are cave-like underground areas built with a purpose.`,
+		},
 		`desert`: &BiomeInfo{
 			BiomeId:     `desert`,
 			Name:        `Desert`,
