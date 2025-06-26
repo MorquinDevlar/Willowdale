@@ -48,11 +48,11 @@ func GetDetails(r *Room, user *users.UserRecord, tinymap ...[]string) RoomTempla
 
 	b := r.GetBiome()
 
-	if b.symbol != 0 {
-		roomSymbol = string(b.symbol)
+	if b.GetSymbol() != 0 {
+		roomSymbol = string(b.GetSymbol())
 	}
-	if b.name != `` {
-		roomLegend = b.name
+	if b.Name != `` {
+		roomLegend = b.Name
 	}
 
 	showPvp := false

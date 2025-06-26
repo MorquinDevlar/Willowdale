@@ -2240,7 +2240,7 @@ func (r *Room) Filepath() string {
 	return util.FilePath(zone, `/`, r.Filename())
 }
 
-func (r *Room) GetBiome() BiomeInfo {
+func (r *Room) GetBiome() *BiomeInfo {
 
 	if r.Biome == `` {
 		if r.Zone != `` {
