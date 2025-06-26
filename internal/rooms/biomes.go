@@ -101,6 +101,13 @@ func LoadBiomeDataFiles() {
 
 func loadHardcodedBiomes() {
 	biomes = map[string]*BiomeInfo{
+		`land`: &BiomeInfo{
+			BiomeId:     `land`,
+			Name:        `Land`,
+			Symbol:      `•`,
+			LitArea:     true,
+			Description: `The world is made of land.`,
+		},
 		`city`: &BiomeInfo{
 			BiomeId:     `city`,
 			Name:        `City`,
@@ -187,6 +194,13 @@ func loadHardcodedBiomes() {
 			Symbol:      `⌬`,
 			DarkArea:    true,
 			Description: `The land is covered in caves of all sorts. You never know what you'll find in them.`,
+		},
+		`dungeon`: &BiomeInfo{
+			BiomeId:     `dungeon`,
+			Name:        `Dungeon`,
+			Symbol:      `•`,
+			DarkArea:    true,
+			Description: `These are cave-like underground areas built with a purpose.`,
 		},
 		`desert`: &BiomeInfo{
 			BiomeId:     `desert`,
